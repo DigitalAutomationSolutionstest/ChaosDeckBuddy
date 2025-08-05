@@ -13,24 +13,47 @@ import os
 from dotenv import load_dotenv
 import stripe
 from datetime import datetime, timedelta
-from flask import Flask, request
-import threading
+from flask import Flask, request, jsonify
+from threading import Thread
+import logging
 
 load_dotenv()
+
+# Configure logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
+
+# Environment variables
 TOKEN = os.getenv('DISCORD_TOKEN')
 ELEVENLABS_API_KEY = os.getenv('ELEVENLABS_API_KEY')
 LEONARDO_API_KEY = os.getenv('LEONARDO_API_KEY')
 
+# Validate critical environment variables
+if not TOKEN:
+    logger.error("DISCORD_TOKEN not found - Bot cannot start")
+    exit(1)
+
+logger.info("Environment variables loaded successfully")
+
 # Stripe keys - Load from environment variables
-STRIPE_PUBLISHABLE_KEY = os.getenv('STRIPE_PUBLISHABLE_KEY', 'pk_test_your_key_here')
-STRIPE_SECRET_KEY = os.getenv('STRIPE_SECRET_KEY', 'sk_test_your_key_here')
-STRIPE_WEBHOOK_SECRET = os.getenv('STRIPE_WEBHOOK_SECRET', 'whsec_your_webhook_secret_here')
+STRIPE_PUBLISHABLE_KEY = os.getenv('STRIPE_PUBLISHABLE_KEY')
+STRIPE_SECRET_KEY = os.getenv('STRIPE_SECRET_KEY')
+STRIPE_WEBHOOK_SECRET = os.getenv('STRIPE_WEBHOOK_SECRET')
 
 # Initialize Stripe
-stripe.api_key = STRIPE_SECRET_KEY
+if STRIPE_SECRET_KEY:
+    stripe.api_key = STRIPE_SECRET_KEY
+    logger.info("Stripe initialized successfully")
+else:
+    logger.warning("STRIPE_SECRET_KEY not found - Stripe features disabled")
 
 # Flask app per gestire il webhook
 app = Flask(__name__)
+
+# Production routes
+@app.route('/', methods=['GET'])
+def root():
+    return "Chaos Deck AI Webhook Server - Running!", 200
 
 @app.route('/health', methods=['GET'])
 def health_check():
@@ -46,6 +69,10 @@ bot = commands.Bot(command_prefix='!', intents=intents)
 # Flask routes per webhook Stripe
 @app.route('/webhook', methods=['POST'])
 def stripe_webhook():
+    if not STRIPE_WEBHOOK_SECRET:
+        logger.error("STRIPE_WEBHOOK_SECRET not configured")
+        return 'Webhook secret not configured', 500
+    
     payload = request.get_data()
     sig_header = request.headers.get('Stripe-Signature')
     
@@ -53,17 +80,18 @@ def stripe_webhook():
         event = stripe.Webhook.construct_event(
             payload, sig_header, STRIPE_WEBHOOK_SECRET
         )
+        logger.info(f"Webhook received: {event['type']}")
     except ValueError as e:
-        print(f"Invalid payload: {e}")
+        logger.error(f"Invalid payload: {e}")
         return 'Invalid payload', 400
     except stripe.error.SignatureVerificationError as e:
-        print(f"Invalid signature: {e}")
+        logger.error(f"Invalid signature: {e}")
         return 'Invalid signature', 400
     
     # Handle events
     if event['type'] == 'checkout.session.completed':
         session = event['data']['object']
-        print(f"Checkout completed: {session['id']}")
+        logger.info(f"Checkout completed: {session['id']}")
         
         # Extract metadata
         user_id = session.get('metadata', {}).get('user_id')
@@ -73,15 +101,15 @@ def stripe_webhook():
             # Process the purchase
             process_purchase(user_id, item_id, session['id'])
         else:
-            print(f"Missing metadata in session {session['id']}")
+            logger.warning(f"Missing metadata in session {session['id']}")
             
     elif event['type'] == 'payment_intent.succeeded':
         payment_intent = event['data']['object']
-        print(f"Payment succeeded: {payment_intent['id']}")
+        logger.info(f"Payment succeeded: {payment_intent['id']}")
         
     elif event['type'] == 'payment_intent.payment_failed':
         payment_intent = event['data']['object']
-        print(f"Payment failed: {payment_intent['id']}")
+        logger.warning(f"Payment failed: {payment_intent['id']}")
         
     return 'OK', 200
 
@@ -91,7 +119,7 @@ def process_purchase(user_id, item_id, session_id):
         # Get user from Discord
         user = bot.get_user(int(user_id))
         if not user:
-            print(f"User {user_id} not found")
+            logger.warning(f"User {user_id} not found")
             return
             
         # Define items and their rewards
@@ -148,13 +176,13 @@ def process_purchase(user_id, item_id, session_id):
         }
         
         if item_id not in items:
-            print(f"Invalid item_id: {item_id}")
+            logger.warning(f"Invalid item_id: {item_id}")
             return
             
         item = items[item_id]
         
         # Log the purchase
-        print(f"Processing purchase: {user.name} bought {item['name']} (Session: {session_id})")
+        logger.info(f"Processing purchase: {user.name} bought {item['name']} (Session: {session_id})")
         
         # Award rewards based on item type
         if item_id == "booster":
@@ -182,7 +210,7 @@ def process_purchase(user_id, item_id, session_id):
         )
         
     except Exception as e:
-        print(f"Error processing purchase: {e}")
+        logger.error(f"Error processing purchase: {e}")
 
 def award_booster_pack(user_id):
     """Award 5 rare cards to user"""
@@ -191,43 +219,44 @@ def award_booster_pack(user_id):
         # Generate a rare card (you can customize this logic)
         card_name = f"Rare Card {random.randint(1000, 9999)}"
         # Add to user's inventory (implement your card storage logic)
-        print(f"Awarded rare card to user {user_id}")
+        logger.info(f"Awarded rare card to user {user_id}")
 
 def award_legendary_pack(user_id):
     """Award 3 legendary cards to user"""
     for _ in range(3):
         card_name = f"Legendary Card {random.randint(1000, 9999)}"
-        print(f"Awarded legendary card to user {user_id}")
+        logger.info(f"Awarded legendary card to user {user_id}")
 
 def reset_daily_cooldown(user_id):
     """Reset user's daily cooldown"""
     c.execute("UPDATE users SET last_daily = NULL WHERE user_id = ?", (user_id,))
     conn.commit()
-    print(f"Reset daily cooldown for user {user_id}")
+    logger.info(f"Reset daily cooldown for user {user_id}")
 
 def reduce_pity(user_id):
     """Reduce user's pity count by 10"""
     c.execute("UPDATE users SET pity_count = MAX(0, pity_count - 10) WHERE user_id = ?", (user_id,))
     conn.commit()
-    print(f"Reduced pity for user {user_id}")
+    logger.info(f"Reduced pity for user {user_id}")
 
 def unlock_next_achievement(user_id):
     """Auto-unlock next achievement"""
     # Implement achievement unlocking logic
-    print(f"Unlocked next achievement for user {user_id}")
+    logger.info(f"Unlocked next achievement for user {user_id}")
 
 def add_fusion_crystal(user_id):
     """Add fusion crystal to user"""
     # Implement fusion crystal logic
-    print(f"Added fusion crystal to user {user_id}")
+    logger.info(f"Added fusion crystal to user {user_id}")
 
 def add_event_booster(user_id):
     """Add event booster to user"""
     # Implement event booster logic
-    print(f"Added event booster to user {user_id}")
+    logger.info(f"Added event booster to user {user_id}")
 
 def run_flask():
-    app.run(host='0.0.0.0', port=5000, debug=False)
+    port = int(os.environ.get('PORT', 5000))
+    app.run(host='0.0.0.0', port=port, debug=False)
 
 # DB Setup
 conn = sqlite3.connect('chaos.db')
@@ -251,13 +280,17 @@ available_models = [
 
 @bot.event
 async def on_ready():
-    print('Chaos Deck AI online! 🚀')
+    port = int(os.environ.get('PORT', 5000))
+    base_url = os.getenv('BASE_URL', 'https://chaosdeckbuddy.onrender.com')
+    webhook_url = f"{base_url}/webhook"
+    
+    print(f'Chaos Deck AI online! 🚀 Flask running on port {port}')
+    print(f'Webhook URL: {webhook_url}')
     
     # Avvia Flask server in background
-    flask_thread = threading.Thread(target=run_flask, daemon=True)
+    flask_thread = Thread(target=run_flask, daemon=True)
     flask_thread.start()
-    print('Flask server avviato in background sulla porta 5000')
-    print('Webhook URL: https://f9d98f31a7f3.ngrok-free.app/webhook')
+    print(f'Flask server avviato in background sulla porta {port}')
     
     # Initialize DB on ready
     c.execute('''CREATE TABLE IF NOT EXISTS users (user_id TEXT PRIMARY KEY, points INT DEFAULT 0, level INT DEFAULT 1, last_daily TEXT, streak INT DEFAULT 0, pity_count INT DEFAULT 0)''')
@@ -268,11 +301,11 @@ async def on_ready():
     c.execute('''CREATE TABLE IF NOT EXISTS user_achievements (user_id TEXT, achievement_id TEXT, unlocked_date TEXT, PRIMARY KEY (user_id, achievement_id))''')
     conn.commit()
     
-    print(f"Hardcoded models available: {len(available_models)} total")
+    logger.info(f"Hardcoded models available: {len(available_models)} total")
     
     # Test dummy generation
     leo_test_payload = {"prompt": "Test single trading card in anime style", "modelId": random.choice(available_models), "width": 512, "height": 768, "num_images": 1}
-    print(f"Test dummy started with model {leo_test_payload['modelId']}")
+    logger.info(f"Test dummy started with model {leo_test_payload['modelId']}")
     try:
         async with aiohttp.ClientSession() as session:
             async with session.post("https://cloud.leonardo.ai/api/rest/v1/generations", json=leo_test_payload, headers={"Authorization": f"Bearer {LEONARDO_API_KEY}"}) as resp:
@@ -286,13 +319,13 @@ async def on_ready():
                             poll_data = await poll.json()
                             if poll_data['generations_by_pk']['generated_images']:
                                 image_url = poll_data['generations_by_pk']['generated_images'][0]['url']
-                                print(f"Test gen success with model {leo_test_payload['modelId']}: Image URL {image_url}")
+                                logger.info(f"Test gen success with model {leo_test_payload['modelId']}: Image URL {image_url}")
                                 break
                         await asyncio.sleep(3)
                 else:
-                    print(f"Test fail: Status {resp.status} - {await resp.text()}")
+                    logger.warning(f"Test fail: Status {resp.status} - {await resp.text()}")
     except Exception as e:
-        print(f"Test Leonardo dummy failed: {str(e)}")
+        logger.error(f"Test Leonardo dummy failed: {str(e)}")
     
     # Initialize achievements
     achievements_data = [
@@ -337,7 +370,7 @@ async def add_points(user_id, points, ctx=None):
 def unlock_badge(user_id, badge_name, desc=""):
     c.execute("INSERT OR IGNORE INTO badges VALUES (?, ?)", (user_id, badge_name))
     conn.commit()
-    print(f"Badge unlocked for {user_id}: {badge_name} - {desc}")
+    logger.info(f"Badge unlocked for {user_id}: {badge_name} - {desc}")
 
 def get_user_badges(user_id):
     c.execute("SELECT badge_name FROM badges WHERE user_id=?", (user_id,))
@@ -437,7 +470,7 @@ async def chaos(ctx, *args):
     if theme not in THEMES: 
         theme = 'random'
     
-    print(f"Processed theme: {theme}")
+    logger.info(f"Chaos command - User: {ctx.author.name}, Theme: {theme}, Mode: {mode}")
     
     # Get user level for rarity boost
     c.execute("SELECT level FROM users WHERE user_id=?", (str(ctx.author.id),))
@@ -533,7 +566,7 @@ async def chaos(ctx, *args):
         "num_images": 1,
         "negative_prompt": "multiple images, blurry, low quality, collage, extra elements"
     }
-    print(f"Selected model for this generation: {leo_payload['modelId']}")
+    logger.info(f"Selected model for this generation: {leo_payload['modelId']}")
     headers = {"Authorization": f"Bearer {LEONARDO_API_KEY}"}
     
     image_url = 'https://placeholder.com/512x768'
@@ -541,26 +574,26 @@ async def chaos(ctx, *args):
         async with aiohttp.ClientSession() as session:
             async with session.post("https://cloud.leonardo.ai/api/rest/v1/generations", json=leo_payload, headers=headers) as resp:
                 data = await resp.json()
-                print(f"Response from post: {data}")
+                logger.info(f"Response from post: {data}")
                 gen_id = data['sdGenerationJob']['generationId']
-                print(f"Leonardo: Generation started, gen_id: {gen_id}")
+                logger.info(f"Leonardo: Generation started, gen_id: {gen_id}")
                 
                 for _ in range(30):
                     async with session.get(f"https://cloud.leonardo.ai/api/rest/v1/generations/{gen_id}", headers=headers) as poll:
                         poll_data = await poll.json()
-                        print(f"Polling {_+1}: {poll_data}")
+                        logger.debug(f"Polling {_+1}: {poll_data}")
                         if poll_data['generations_by_pk']['generated_images']:
                             image_url = poll_data['generations_by_pk']['generated_images'][0]['url']
-                            print(f"Image generated: {image_url}")
+                            logger.info(f"Image generated: {image_url}")
                             break
                     await asyncio.sleep(5)
                 
                 if image_url == 'https://placeholder.com/512x768':
-                    print("Generation failed: No image ready after 30 attempts")
+                    logger.warning("Generation failed: No image ready after 30 attempts")
                     await ctx.send("Image not generated – retry or check Leonardo credits!")
-                    
+                        
     except Exception as e:
-        print(f"Detailed Leonardo error: {str(e)} - Status: {resp.status if 'resp' in locals() else 'unknown'} - Response: {await resp.text() if 'resp' in locals() else 'no response'}")
+        logger.error(f"Detailed Leonardo error: {str(e)} - Status: {resp.status if 'resp' in locals() else 'unknown'} - Response: {await resp.text() if 'resp' in locals() else 'no response'}")
         await ctx.send(f"Image error: {str(e)} – Check model ID or API.")
     
     # Fallback if image not generated
@@ -603,7 +636,7 @@ async def chaos(ctx, *args):
                 await vc.disconnect()
                 os.remove("temp.mp3")
         except Exception as e:
-            print(f"ElevenLabs audio error: {e}")
+            logger.error(f"ElevenLabs audio error: {e}")
 
     # Colori rarity
     rarity_colors = {
@@ -1259,7 +1292,7 @@ async def run_campaign(ctx, campaign_id):
     
     while turn_num < 10:  # Loop for turns
         turn_num += 1
-        print(f"Turn {turn_num}: Starting...")
+        logger.info(f"Turn {turn_num}: Starting...")
         
         # Generate turn
         turn_prompt = f"Based on story: '{story}', generate next turn for D&D-like PVE in {theme}: Describe situation (2-3 sentences), then list 1-3 choices (e.g., '1: Attack the boss, 2: Defend allies, 3: Use special ability'). Respond in English only. Include chaos elements from crossover themes."
@@ -1269,7 +1302,7 @@ async def run_campaign(ctx, campaign_id):
             max_tokens=200
         )
         turn_desc = response.choices[0].message.content.strip()
-        print(f"Turn {turn_num}: Desc '{turn_desc[:50]}...'")
+        logger.info(f"Turn {turn_num}: Desc '{turn_desc[:50]}...'")
         
         # Generate image for turn
         leo_payload = {
@@ -1300,7 +1333,7 @@ async def run_campaign(ctx, campaign_id):
         
         embed = discord.Embed(title=f"Turn {turn_num} - {theme.capitalize()}", description=turn_desc, color=0xFF0000)
         embed.set_image(url=image_url)
-        print(f"Sending embed for Turn {turn_num}: Title '{embed.title}', Desc '{embed.description[:50]}...'")
+        logger.info(f"Sending embed for Turn {turn_num}: Title '{embed.title}', Desc '{embed.description[:50]}...'")
         await ctx.send(embed=embed)
         await ctx.send("*(See embed above for details)*")  # Fallback text for log
         
@@ -1308,7 +1341,7 @@ async def run_campaign(ctx, campaign_id):
         view = View()
         for i in range(1, 4):  # Assume always 3 choices
             view.add_item(Button(label=str(i), style=discord.ButtonStyle.primary, custom_id=f"choice_{i}"))
-        print(f"Button view added with {len(view.children)} buttons")
+        logger.info(f"Button view added with {len(view.children)} buttons")
         msg = await ctx.send("Choose your action:", view=view)
         
         try:
@@ -1319,7 +1352,7 @@ async def run_campaign(ctx, campaign_id):
             choice = random.randint(1, 3)
             await ctx.send("⏰ Timeout! Choice randomized.")
         
-        print(f"Turn {turn_num}: Choice {choice}")
+        logger.info(f"Turn {turn_num}: Choice {choice}")
         
         # Card selection: First 3 from DB
         c.execute("SELECT id, name, power, special_effect FROM cards WHERE user_id=? LIMIT 3", (str(ctx.author.id),))
@@ -1331,7 +1364,7 @@ async def run_campaign(ctx, campaign_id):
         select_embed = discord.Embed(title="Choose a card for this action:", color=0x00FF00)
         for i, card in enumerate(cards, 1):
             select_embed.add_field(name=f"{i}: {card[1]}", value=f"Power: {card[2]} | Special: {card[3]}", inline=False)
-        print(f"Sending card selection embed: Fields {len(select_embed.fields)}")
+        logger.info(f"Sending card selection embed: Fields {len(select_embed.fields)}")
         await ctx.send(embed=select_embed)
         await ctx.send("*(See embed above for details)*")  # Fallback text for log
         
@@ -1351,7 +1384,7 @@ async def run_campaign(ctx, campaign_id):
             await ctx.send("⏰ Timeout! Card randomized.")
         selected_card = cards[card_index]
         
-        print(f"Turn {turn_num}: Card {selected_card[1]}")
+        logger.info(f"Turn {turn_num}: Card {selected_card[1]}")
         
         # Simulate outcome
         success_prob = (selected_card[2] / 100) + (0.2 if selected_card[3] == "Power Drain" else 0) + random.uniform(-0.1, 0.1)  # Chaos
@@ -1365,7 +1398,7 @@ async def run_campaign(ctx, campaign_id):
             max_tokens=100
         )
         outcome_text = response.choices[0].message.content.strip()
-        print(f"Outcome generated: {outcome_text[:50]}...")
+        logger.info(f"Outcome generated: {outcome_text[:50]}...")
         
         story += f"\n\n**Turn {turn_num}:** {turn_desc}\nChoice: {choice} with {selected_card[1]}\n{outcome_text}"
         c.execute("UPDATE campaigns SET story=?, current_turn=? WHERE campaign_id=?", (story, turn_num, campaign_id))
@@ -1475,20 +1508,24 @@ async def commands_list(ctx):
 
 @bot.command()
 async def hello(ctx):
-    print(f"!hello command triggered by {ctx.author} in channel {ctx.channel.name if hasattr(ctx.channel, 'name') else 'DM'}")
+    logger.info(f"!hello command triggered by {ctx.author} in channel {ctx.channel.name if hasattr(ctx.channel, 'name') else 'DM'}")
     await ctx.send("Hello, I'm Chaos Deck Buddy! 🎮")
 
 @bot.command()
 async def ping(ctx):
-    print("Ping command triggered")
+    logger.info("Ping command triggered")
     await ctx.send("Pong! 🏓")
 
 @bot.command()
 async def webhook_test(ctx):
     """Test del webhook Stripe"""
+    base_url = os.getenv('BASE_URL', 'https://chaosdeckbuddy.onrender.com')
+    webhook_url = f"{base_url}/webhook"
+    health_url = f"{base_url}/health"
+    
     await ctx.send('✅ Webhook configurato correttamente!\n'
-                   f'🌐 URL: https://f9d98f31a7f3.ngrok-free.app/webhook\n'
-                   f'🔗 Health check: https://f9d98f31a7f3.ngrok-free.app/health\n'
+                   f'🌐 URL: {webhook_url}\n'
+                   f'🔗 Health check: {health_url}\n'
                    f'💳 Stripe configurato con chiavi live')
 
 @bot.event
@@ -1498,7 +1535,7 @@ async def on_interaction(interaction):
 
 @bot.event
 async def on_message(message):
-    print(f"Message received in channel {message.channel.name if hasattr(message.channel, 'name') else 'DM'}: {message.content} from {message.author}")
+    logger.debug(f"Message received in channel {message.channel.name if hasattr(message.channel, 'name') else 'DM'}: {message.content} from {message.author}")
     if message.author == bot.user:
         return
     await bot.process_commands(message)
