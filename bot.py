@@ -21,10 +21,10 @@ TOKEN = os.getenv('DISCORD_TOKEN')
 ELEVENLABS_API_KEY = os.getenv('ELEVENLABS_API_KEY')
 LEONARDO_API_KEY = os.getenv('LEONARDO_API_KEY')
 
-# Stripe keys - USA SOLO TEST KEYS per ora!
-STRIPE_PUBLISHABLE_KEY = 'pk_live_51RsUQpCy8uWigKLWaoU8QWnopZJvVhLp3cUVpAWLHSbULQv9CEk7FkLM93oTskjTGkxMQ7LvvBwNzGin0fgheon700ENlIlDSc'
-STRIPE_SECRET_KEY = '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'
-STRIPE_WEBHOOK_SECRET = 'whsec_4PevJRK51VhKFYFFwjTG3SnhB02jkzSL'
+# Stripe keys - Load from environment variables
+STRIPE_PUBLISHABLE_KEY = os.getenv('STRIPE_PUBLISHABLE_KEY', 'pk_test_your_key_here')
+STRIPE_SECRET_KEY = os.getenv('STRIPE_SECRET_KEY', 'sk_test_your_key_here')
+STRIPE_WEBHOOK_SECRET = os.getenv('STRIPE_WEBHOOK_SECRET', 'whsec_your_webhook_secret_here')
 
 # Initialize Stripe
 stripe.api_key = STRIPE_SECRET_KEY
