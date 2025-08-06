@@ -19,6 +19,7 @@ from threading import Thread
 import logging
 import signal
 import sys
+import base64
 
 load_dotenv()
 
@@ -30,6 +31,7 @@ logger = logging.getLogger(__name__)
 TOKEN = os.getenv('DISCORD_TOKEN')
 ELEVENLABS_API_KEY = os.getenv('ELEVENLABS_API_KEY')
 LEONARDO_API_KEY = os.getenv('LEONARDO_API_KEY')
+OPENAI_API_KEY = os.getenv('OPENAI_API_KEY')
 
 # Validate critical environment variables
 if not TOKEN:
@@ -102,321 +104,285 @@ def stripe_webhook():
         
         if user_id and item_id:
             process_purchase(user_id, item_id, session['id'])
-        else:
-            logger.warning(f"No user_id or item_id in session metadata: {session.get('metadata', {})}")
     
     return 'OK', 200
 
 def process_purchase(user_id, item_id, session_id):
-    """Process a completed purchase"""
-    logger.info(f"Processing purchase: user={user_id}, item={item_id}, session={session_id}")
+    """Process a successful purchase"""
+    logger.info(f"Processing purchase: User {user_id}, Item {item_id}, Session {session_id}")
     
-    try:
-        # Add points based on item
-        points_to_add = 0
-        if item_id == 'booster_pack':
-            points_to_add = 100
-            award_booster_pack(user_id)
-        elif item_id == 'legendary_pack':
-            points_to_add = 500
-            award_legendary_pack(user_id)
-        elif item_id == 'daily_reset':
-            points_to_add = 50
-            reset_daily_cooldown(user_id)
-        elif item_id == 'pity_reduction':
-            points_to_add = 200
-            reduce_pity(user_id)
-        elif item_id == 'achievement_unlock':
-            points_to_add = 300
-            unlock_next_achievement(user_id)
-        elif item_id == 'fusion_crystal':
-            points_to_add = 150
-            add_fusion_crystal(user_id)
-        elif item_id == 'event_booster':
-            points_to_add = 250
-            add_event_booster(user_id)
-        
-        if points_to_add > 0:
-            # Add points to user
-            c.execute("INSERT OR IGNORE INTO users VALUES (?, 0, 1, NULL, 0, 0)", (user_id,))
-            c.execute("UPDATE users SET points = points + ? WHERE user_id=?", (points_to_add, user_id))
-            conn.commit()
-            logger.info(f"Added {points_to_add} points to user {user_id}")
-        
-    except Exception as e:
-        logger.error(f"Error processing purchase: {e}")
+    # Award items based on purchase
+    if item_id == 'booster_pack':
+        award_booster_pack(user_id)
+    elif item_id == 'legendary_pack':
+        award_legendary_pack(user_id)
+    elif item_id == 'daily_reset':
+        reset_daily_cooldown(user_id)
+    elif item_id == 'pity_reduction':
+        reduce_pity(user_id)
+    elif item_id == 'achievement_unlock':
+        unlock_next_achievement(user_id)
+    elif item_id == 'fusion_crystal':
+        add_fusion_crystal(user_id)
+    elif item_id == 'event_booster':
+        add_event_booster(user_id)
 
 def award_booster_pack(user_id):
-    """Award a booster pack to user"""
-    logger.info(f"Awarding booster pack to user {user_id}")
-    # Implementation for booster pack logic
+    """Award a booster pack to the user"""
+    c.execute("UPDATE users SET booster_packs = booster_packs + 1 WHERE user_id = ?", (user_id,))
+    conn.commit()
+    logger.info(f"Awarded booster pack to user {user_id}")
 
 def award_legendary_pack(user_id):
-    """Award a legendary pack to user"""
-    logger.info(f"Awarding legendary pack to user {user_id}")
-    # Implementation for legendary pack logic
+    """Award a legendary pack to the user"""
+    c.execute("UPDATE users SET legendary_packs = legendary_packs + 1 WHERE user_id = ?", (user_id,))
+    conn.commit()
+    logger.info(f"Awarded legendary pack to user {user_id}")
 
 def reset_daily_cooldown(user_id):
-    """Reset daily cooldown for user"""
-    logger.info(f"Resetting daily cooldown for user {user_id}")
-    c.execute("UPDATE users SET last_daily = NULL WHERE user_id=?", (user_id,))
+    """Reset daily cooldown for the user"""
+    c.execute("UPDATE users SET last_daily = NULL WHERE user_id = ?", (user_id,))
     conn.commit()
+    logger.info(f"Reset daily cooldown for user {user_id}")
 
 def reduce_pity(user_id):
-    """Reduce pity counter for user"""
-    logger.info(f"Reducing pity for user {user_id}")
-    c.execute("UPDATE users SET pity_count = GREATEST(pity_count - 1, 0) WHERE user_id=?", (user_id,))
+    """Reduce pity counter for the user"""
+    c.execute("UPDATE users SET pity_counter = GREATEST(pity_counter - 10, 0) WHERE user_id = ?", (user_id,))
     conn.commit()
+    logger.info(f"Reduced pity counter for user {user_id}")
 
 def unlock_next_achievement(user_id):
-    """Unlock next achievement for user"""
-    logger.info(f"Unlocking next achievement for user {user_id}")
+    """Unlock the next achievement for the user"""
     # Implementation for achievement unlocking
+    logger.info(f"Unlocked achievement for user {user_id}")
 
 def add_fusion_crystal(user_id):
-    """Add fusion crystal to user"""
-    logger.info(f"Adding fusion crystal to user {user_id}")
-    # Implementation for fusion crystal
+    """Add fusion crystal to the user"""
+    c.execute("UPDATE users SET fusion_crystals = fusion_crystals + 1 WHERE user_id = ?", (user_id,))
+    conn.commit()
+    logger.info(f"Added fusion crystal to user {user_id}")
 
 def add_event_booster(user_id):
-    """Add event booster to user"""
-    logger.info(f"Adding event booster to user {user_id}")
-    # Implementation for event booster
+    """Add event booster to the user"""
+    c.execute("UPDATE users SET event_boosters = event_boosters + 1 WHERE user_id = ?", (user_id,))
+    conn.commit()
+    logger.info(f"Added event booster to user {user_id}")
 
 def run_flask():
-    """Run Flask server for webhook handling"""
+    """Run Flask server in background"""
     port = int(os.environ.get('PORT', 5000))
-    logger.info(f"Starting Flask server on port {port}")
     app.run(host='0.0.0.0', port=port, debug=False)
 
-# Graceful shutdown handler
 def signal_handler(signum, frame):
     """Handle graceful shutdown"""
-    logger.info(f"Received signal {signum}, shutting down gracefully...")
-    
-    # Close database connection
-    if 'conn' in globals():
+    logger.info("Received shutdown signal, closing gracefully...")
+    try:
+        # Close database connection
         conn.close()
         logger.info("Database connection closed")
+    except:
+        pass
     
-    # Logout Discord bot
-    if bot.is_ready():
+    # Stop the bot
+    try:
         asyncio.create_task(bot.close())
-        logger.info("Discord bot logged out")
+        logger.info("Bot shutdown initiated")
+    except:
+        pass
     
-    logger.info("Graceful shutdown completed")
     sys.exit(0)
 
 # Register signal handlers
 signal.signal(signal.SIGTERM, signal_handler)
 signal.signal(signal.SIGINT, signal_handler)
 
-# DB Setup
-conn = sqlite3.connect('chaos.db')
+# Database setup
+conn = sqlite3.connect('chaos_deck.db', check_same_thread=False)
 c = conn.cursor()
 
-THEMES = [
-    'onepiece', 'dragonball', 'evangelion', 'fromsoftware', 'jrpg', 'anime', 'soulslike', 'random',
-    'seven_deadly_sins', 'naruto', 'my_hero_academia', 'jujutsu_kaisen', 'demon_slayer', 'attack_on_titan', 
-    'bleach', 'hunter_x_hunter', 'fullmetal_alchemist', 'death_note', 'chainsaw_man', 'spy_x_family', 
-    'black_clover', 'tokyo_ghoul', 'final_fantasy', 'persona', 'kingdom_hearts', 'tales_of', 'nier_automata', 
-    'dragon_quest', 'chrono_trigger', 'fire_emblem', 'xenoblade', 'bravely_default', 'octopath_traveler', 
-    'shin_megami_tensei', 'suikoden', 'valkyria_chronicles'
-]
+# Create tables if they don't exist
+c.execute('''CREATE TABLE IF NOT EXISTS users
+             (user_id TEXT PRIMARY KEY, points INTEGER DEFAULT 0, level INTEGER DEFAULT 1, 
+              last_daily TEXT, pity_counter INTEGER DEFAULT 0, booster_packs INTEGER DEFAULT 0,
+              legendary_packs INTEGER DEFAULT 0, fusion_crystals INTEGER DEFAULT 0, 
+              event_boosters INTEGER DEFAULT 0, total_cards INTEGER DEFAULT 0,
+              legendary_cards INTEGER DEFAULT 0, limited_cards INTEGER DEFAULT 0)''')
 
-available_models = [
-    "2067ae52-33fd-4a82-bb92-c2c55e7d2786",  # AlbedoBase XL
-    "b63f7119-31dc-4540-969b-2a9df997e173",  # SDXL 0.9
-    "5c232a9e-9061-4777-980a-ddc8e65647c6",  # Leonardo Vision XL
-    "1e60896f-3c26-4296-8ecc-53e2afecc132"   # Leonardo Diffusion XL
-]
+c.execute('''CREATE TABLE IF NOT EXISTS cards
+             (card_id TEXT PRIMARY KEY, user_id TEXT, rarity TEXT, name TEXT, 
+              lore TEXT, image_url TEXT, attack INTEGER, health INTEGER, source TEXT)''')
+
+c.execute('''CREATE TABLE IF NOT EXISTS badges
+             (user_id TEXT, badge_name TEXT, description TEXT, unlocked_date TEXT)''')
+
+c.execute('''CREATE TABLE IF NOT EXISTS achievements
+             (user_id TEXT, achievement_name TEXT, progress INTEGER, completed_date TEXT)''')
+
+c.execute('''CREATE TABLE IF NOT EXISTS card_lore
+             (card_id TEXT PRIMARY KEY, lore TEXT, version INTEGER DEFAULT 0)''')
+
+c.execute('''CREATE TABLE IF NOT EXISTS pull_history
+             (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id TEXT, pull_type TEXT, 
+              card_name TEXT, timestamp TEXT)''')
+
+c.execute('''CREATE TABLE IF NOT EXISTS server_announcements
+             (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id TEXT, card_name TEXT, 
+              rarity TEXT, timestamp TEXT)''')
+
+conn.commit()
 
 @bot.event
 async def on_ready():
-    port = int(os.environ.get('PORT', 5000))
-    base_url = os.getenv('BASE_URL', 'https://chaosdeckbuddy.onrender.com')
-    webhook_url = f"{base_url}/webhook"
+    """Bot startup event"""
+    logger.info(f'{bot.user} has connected to Discord!')
     
-    print(f'Chaos Deck AI online! 🚀 Flask running on port {port}')
-    print(f'Webhook URL: {webhook_url}')
-    logger.info(f"Bot logged in as {bot.user.name} (ID: {bot.user.id})")
-    logger.info(f"Flask server configured for port {port}")
-    logger.info(f"Webhook URL: {webhook_url}")
-    
-    # Avvia Flask server in background
+    # Start Flask server in background
     flask_thread = Thread(target=run_flask, daemon=True)
     flask_thread.start()
-    logger.info(f'Flask server avviato in background sulla porta {port}')
+    logger.info("Flask server avviato in background sulla porta 5000")
     
-    # Initialize DB on ready
-    c.execute('''CREATE TABLE IF NOT EXISTS users (user_id TEXT PRIMARY KEY, points INT DEFAULT 0, level INT DEFAULT 1, last_daily TEXT, streak INT DEFAULT 0, pity_count INT DEFAULT 0)''')
-    c.execute('''CREATE TABLE IF NOT EXISTS cards (id TEXT PRIMARY KEY, user_id TEXT, rarity TEXT, name TEXT, description TEXT, image_url TEXT, power INTEGER, special_effect TEXT, theme TEXT)''')
-    c.execute('''CREATE TABLE IF NOT EXISTS campaigns (campaign_id TEXT PRIMARY KEY, user_id TEXT, theme TEXT, current_turn INT DEFAULT 0, story TEXT, status TEXT DEFAULT 'active')''')
-    c.execute('''CREATE TABLE IF NOT EXISTS badges (user_id TEXT, badge_name TEXT, PRIMARY KEY (user_id, badge_name))''')
-    c.execute('''CREATE TABLE IF NOT EXISTS achievements (achievement_id TEXT PRIMARY KEY, name TEXT, description TEXT, points_reward INT, requirement_type TEXT, requirement_value INT)''')
-    c.execute('''CREATE TABLE IF NOT EXISTS user_achievements (user_id TEXT, achievement_id TEXT, unlocked_date TEXT, PRIMARY KEY (user_id, achievement_id))''')
-    
-    # New tables for gacha system
-    c.execute('''CREATE TABLE IF NOT EXISTS card_lore (card_id TEXT PRIMARY KEY, lore TEXT, story_requests INT DEFAULT 0)''')
-    c.execute('''CREATE TABLE IF NOT EXISTS pull_history (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id TEXT, pull_type TEXT, cards_generated TEXT, timestamp TEXT)''')
-    c.execute('''CREATE TABLE IF NOT EXISTS server_announcements (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id TEXT, card_name TEXT, rarity TEXT, timestamp TEXT)''')
-    
-    conn.commit()
-    logger.info("Database tables initialized successfully")
-    
-    logger.info(f"Hardcoded models available: {len(available_models)} total")
-    
-    # Test dummy generation
-    leo_test_payload = {"prompt": "Test single trading card in anime style", "modelId": random.choice(available_models), "width": 512, "height": 768, "num_images": 1}
-    logger.info(f"Test dummy started with model {leo_test_payload['modelId']}")
+    # Test Leonardo AI connection
     try:
+        # Test with a simple generation to verify API key
+        test_payload = {
+            "prompt": "Test single trading card in anime style",
+            "modelId": "b63f7119-31dc-4540-969b-2a9df997e173",  # DreamShaper v7
+            "width": 512,
+            "height": 720,
+            "num_images": 1
+        }
+        
+        headers = {"Authorization": f"Bearer {LEONARDO_API_KEY}"}
+        
         async with aiohttp.ClientSession() as session:
-            async with session.post("https://cloud.leonardo.ai/api/rest/v1/generations", json=leo_test_payload, headers={"Authorization": f"Bearer {LEONARDO_API_KEY}"}) as resp:
-                if resp.status == 200:
-                    data = await resp.json()
-                    gen_id = data['sdGenerationJob']['generationId']
+            async with session.post("https://cloud.leonardo.ai/api/rest/v1/generations", 
+                                  json=test_payload, headers=headers) as resp:
+                data = await resp.json()
+                if 'sdGenerationJob' in data:
+                    logger.info("Hardcoded models available: 4 total")
+                    logger.info(f"Test dummy started with model {test_payload['modelId']}")
                     
-                    # Poll for 10 loops
-                    for _ in range(10):
-                        async with session.get(f"https://cloud.leonardo.ai/api/rest/v1/generations/{gen_id}", headers={"Authorization": f"Bearer {LEONARDO_API_KEY}"}) as poll:
+                    # Poll for test result
+                    gen_id = data['sdGenerationJob']['generationId']
+                    for _ in range(10):  # Shorter test
+                        async with session.get(f"https://cloud.leonardo.ai/api/rest/v1/generations/{gen_id}", 
+                                             headers=headers) as poll:
                             poll_data = await poll.json()
-                            if poll_data['generations_by_pk']['generated_images']:
-                                image_url = poll_data['generations_by_pk']['generated_images'][0]['url']
-                                logger.info(f"Test gen success with model {leo_test_payload['modelId']}: Image URL {image_url}")
+                            if poll_data.get('generations_by_pk', {}).get('generated_images'):
+                                test_url = poll_data['generations_by_pk']['generated_images'][0]['url']
+                                logger.info(f"Test gen success with model {test_payload['modelId']}: Image URL {test_url}")
                                 break
                         await asyncio.sleep(3)
                 else:
-                    logger.warning(f"Test fail: Status {resp.status} - {await resp.text()}")
+                    logger.warning(f"Leonardo test failed: {data}")
+                    
     except Exception as e:
-        logger.error(f"Test Leonardo dummy failed: {str(e)}")
+        logger.error(f"Leonardo connection test failed: {e}")
     
-    # Initialize achievements
-    achievements_data = [
-        ("first_pull", "First Pull", "Pull your first card", 50, "cards", 1),
-        ("card_collector", "Card Collector", "Collect 25 cards", 200, "cards", 25),
-        ("legendary_hunter", "Legendary Hunter", "Pull 5 legendary cards", 500, "legendary", 5),
-        ("streak_master", "Streak Master", "Maintain 7-day streak", 300, "streak", 7),
-        ("campaign_veteran", "Campaign Veteran", "Complete 3 campaigns", 400, "campaigns", 3),
-        ("fusion_expert", "Fusion Expert", "Successfully fuse 5 cards", 600, "fusions", 5),
-        ("chaos_puller", "Chaos Puller", "Pull 100 cards total", 1000, "cards", 100),
-        ("daily_warrior", "Daily Warrior", "Claim 30 daily rewards", 800, "dailies", 30),
-        ("gacha_master", "Gacha Master", "Pull 50 cards in one session", 1500, "gacha_pulls", 50),
-        ("legendary_collector", "Legendary Collector", "Collect 10 legendary cards", 2000, "legendary", 10),
-        ("limited_hunter", "Limited Hunter", "Pull 3 limited cards", 3000, "limited", 3)
-    ]
-    
-    for achievement in achievements_data:
-        c.execute("INSERT OR IGNORE INTO achievements VALUES (?, ?, ?, ?, ?, ?)", achievement)
-    conn.commit()
-    logger.info("Achievements initialized successfully")
+    print("Chaos Deck AI online! 🚀 Flask running on port 5000")
+    print("Webhook URL: https://chaosdeckbuddy.onrender.com/webhook")
 
-# Gacha system functions
 async def add_points(user_id, points, ctx=None):
-    c.execute("INSERT OR IGNORE INTO users VALUES (?, 0, 1, NULL, 0, 0)", (user_id,))
-    c.execute("UPDATE users SET points = points + ? WHERE user_id=?", (points, user_id))
-    c.execute("SELECT points FROM users WHERE user_id=?", (user_id,))
-    total = c.fetchone()[0]
-    old_level = total // 500 + 1
-    new_level = total // 500 + 1
-    c.execute("UPDATE users SET level = ? WHERE user_id=?", (new_level, user_id))
-    conn.commit()
+    """Add points to a user and check for level ups"""
+    c.execute("INSERT OR IGNORE INTO users (user_id, points) VALUES (?, 0)", (user_id,))
+    c.execute("UPDATE users SET points = points + ? WHERE user_id = ?", (points, user_id))
     
-    # Check for level up and perks
-    if new_level > old_level and ctx:
-        perks = {
-            2: "+5% success in PVE",
-            5: "Unlock rare themes",
-            10: "Daily free !chaos"
-        }
-        perk = perks.get(new_level, "New level unlocked!")
+    # Get current level and points
+    c.execute("SELECT points, level FROM users WHERE user_id = ?", (user_id,))
+    result = c.fetchone()
+    if result:
+        current_points, current_level = result
+        new_level = (current_points // 100) + 1
         
-        embed = discord.Embed(title="🔥 Level Up!", description=f"Reached Level {new_level}! Unlocked: {perk}", color=0xFFD700)
-        await ctx.send(embed=embed)
-    
-    return total, new_level
-
-def unlock_badge(user_id, badge_name, desc=""):
-    c.execute("INSERT OR IGNORE INTO badges VALUES (?, ?)", (user_id, badge_name))
-    conn.commit()
-    logger.info(f"Badge unlocked for {user_id}: {badge_name} - {desc}")
-
-def get_user_badges(user_id):
-    c.execute("SELECT badge_name FROM badges WHERE user_id=?", (user_id,))
-    badges = c.fetchall()
-    return [badge[0] for badge in badges]
-
-async def check_achievements(user_id, ctx=None):
-    """Check and unlock achievements based on user progress"""
-    c.execute("SELECT achievement_id, requirement_type, requirement_value, points_reward FROM achievements")
-    achievements = c.fetchall()
-    
-    for achievement in achievements:
-        achievement_id, req_type, req_value, points_reward = achievement
-        
-        # Check if already unlocked
-        c.execute("SELECT 1 FROM user_achievements WHERE user_id=? AND achievement_id=?", (user_id, achievement_id))
-        if c.fetchone():
-            continue
-        
-        # Check requirements
-        unlocked = False
-        if req_type == "cards":
-            c.execute("SELECT COUNT(*) FROM cards WHERE user_id=?", (user_id,))
-            count = c.fetchone()[0]
-            unlocked = count >= req_value
-        elif req_type == "legendary":
-            c.execute("SELECT COUNT(*) FROM cards WHERE user_id=? AND rarity='Legendary'", (user_id,))
-            count = c.fetchone()[0]
-            unlocked = count >= req_value
-        elif req_type == "streak":
-            c.execute("SELECT streak FROM users WHERE user_id=?", (user_id,))
-            streak = c.fetchone()[0]
-            unlocked = streak >= req_value
-        elif req_type == "campaigns":
-            c.execute("SELECT COUNT(*) FROM campaigns WHERE user_id=? AND status='ended'", (user_id,))
-            count = c.fetchone()[0]
-            unlocked = count >= req_value
-        elif req_type == "fusions":
-            # Track fusions in user stats
-            c.execute("SELECT fusion_count FROM users WHERE user_id=?", (user_id,))
-            fusion_count = c.fetchone()[0] if c.fetchone() else 0
-            unlocked = fusion_count >= req_value
-        elif req_type == "dailies":
-            c.execute("SELECT daily_count FROM users WHERE user_id=?", (user_id,))
-            daily_count = c.fetchone()[0] if c.fetchone() else 0
-            unlocked = daily_count >= req_value
-        elif req_type == "gacha_pulls":
-            c.execute("SELECT COUNT(*) FROM pull_history WHERE user_id=? AND pull_type='multi'", (user_id,))
-            count = c.fetchone()[0]
-            unlocked = count >= req_value
-        elif req_type == "limited":
-            c.execute("SELECT COUNT(*) FROM cards WHERE user_id=? AND rarity='Limited'", (user_id,))
-            count = c.fetchone()[0]
-            unlocked = count >= req_value
-        
-        if unlocked:
-            # Unlock achievement
-            c.execute("INSERT INTO user_achievements VALUES (?, ?, ?)", (user_id, achievement_id, datetime.now().strftime('%Y-%m-%d')))
-            c.execute("UPDATE users SET points = points + ? WHERE user_id=?", (points_reward, user_id))
+        if new_level > current_level:
+            c.execute("UPDATE users SET level = ? WHERE user_id = ?", (new_level, user_id))
             conn.commit()
             
             if ctx:
-                embed = discord.Embed(title="🏆 Achievement Unlocked!", description=f"**{achievement_id.replace('_', ' ').title()}**\n+{points_reward} points!", color=0xFFD700)
+                embed = discord.Embed(
+                    title="🎉 Level Up!",
+                    description=f"Congratulations! You've reached level **{new_level}**!",
+                    color=0x00FF00
+                )
                 await ctx.send(embed=embed)
+    
+    conn.commit()
+
+def unlock_badge(user_id, badge_name, desc=""):
+    """Unlock a badge for a user"""
+    c.execute("INSERT OR IGNORE INTO badges (user_id, badge_name, description, unlocked_date) VALUES (?, ?, ?, ?)",
+              (user_id, badge_name, desc, datetime.now().strftime('%Y-%m-%d %H:%M:%S')))
+    conn.commit()
+
+def get_user_badges(user_id):
+    """Get all badges for a user"""
+    c.execute("SELECT badge_name, description FROM badges WHERE user_id = ?", (user_id,))
+    return c.fetchall()
+
+async def check_achievements(user_id, ctx=None):
+    """Check and award achievements based on user stats"""
+    c.execute("SELECT total_cards, legendary_cards, limited_cards, points FROM users WHERE user_id = ?", (user_id,))
+    result = c.fetchone()
+    if not result:
+        return
+    
+    total_cards, legendary_cards, limited_cards, points = result
+    
+    achievements = [
+        ("First Card", "Collect your first card", 1, total_cards),
+        ("Card Collector", "Collect 10 cards", 10, total_cards),
+        ("Card Master", "Collect 50 cards", 50, total_cards),
+        ("Legendary Hunter", "Collect your first legendary card", 1, legendary_cards),
+        ("Legendary Master", "Collect 5 legendary cards", 5, legendary_cards),
+        ("Limited Collector", "Collect your first limited card", 1, limited_cards),
+        ("Gacha Addict", "Pull 100 cards", 100, total_cards),
+        ("Point Collector", "Earn 1000 points", 1000, points),
+        ("Point Master", "Earn 5000 points", 5000, points)
+    ]
+    
+    for achievement_name, description, required, current in achievements:
+        c.execute("SELECT progress FROM achievements WHERE user_id = ? AND achievement_name = ?", 
+                  (user_id, achievement_name))
+        result = c.fetchone()
+        
+        if not result:
+            # New achievement
+            c.execute("INSERT INTO achievements (user_id, achievement_name, progress) VALUES (?, ?, ?)",
+                      (user_id, achievement_name, current))
+            if current >= required:
+                unlock_badge(user_id, achievement_name, description)
+                if ctx:
+                    embed = discord.Embed(
+                        title="🏆 Achievement Unlocked!",
+                        description=f"**{achievement_name}**: {description}",
+                        color=0xFFD700
+                    )
+                    await ctx.send(embed=embed)
+        else:
+            # Update existing achievement
+            old_progress = result[0]
+            if current >= required and old_progress < required:
+                unlock_badge(user_id, achievement_name, description)
+                if ctx:
+                    embed = discord.Embed(
+                        title="🏆 Achievement Unlocked!",
+                        description=f"**{achievement_name}**: {description}",
+                        color=0xFFD700
+                    )
+                    await ctx.send(embed=embed)
+            
+            c.execute("UPDATE achievements SET progress = ? WHERE user_id = ? AND achievement_name = ?",
+                      (current, user_id, achievement_name))
+    
+    conn.commit()
 
 def get_user_achievements(user_id):
-    """Get list of unlocked achievements for user"""
-    c.execute("""
-        SELECT a.name, a.description, a.points_reward 
-        FROM achievements a
-        JOIN user_achievements ua ON a.achievement_id = ua.achievement_id
-        WHERE ua.user_id = ?
-    """, (user_id,))
+    """Get all achievements for a user"""
+    c.execute("SELECT achievement_name, progress FROM achievements WHERE user_id = ?", (user_id,))
     return c.fetchall()
 
 def get_rarity_distribution():
-    """Get rarity based on gacha distribution with pity system"""
-    # Base distribution: Common 50%, Rare 30%, Epic 15%, Legendary 4%, Limited 1%
+    """Get rarity distribution for gacha cards"""
     rand = random.random()
     if rand < 0.50:
         return "Common"
@@ -430,42 +396,52 @@ def get_rarity_distribution():
         return "Limited"
 
 def get_rarity_style(rarity):
-    """Get visual style elements for each rarity"""
+    """Get visual style elements for each rarity with enhanced gacha styling"""
     styles = {
         'Common': {
             'emoji': '⚪',
             'color': 'silver',
             'embed_color': 0xC0C0C0,
-            'frame_style': 'simple metallic',
-            'glow_effect': 'subtle'
+            'frame_style': 'simple metallic border with subtle glow',
+            'glow_effect': 'subtle silver aura',
+            'text_color': 'white',
+            'border_style': 'clean metallic frame'
         },
         'Rare': {
             'emoji': '🔵',
             'color': 'blue',
             'embed_color': 0x0000FF,
-            'frame_style': 'crystalline blue',
-            'glow_effect': 'blue aura'
+            'frame_style': 'crystalline blue border with energy flow',
+            'glow_effect': 'blue energy aura',
+            'text_color': 'cyan',
+            'border_style': 'flowing blue crystal frame'
         },
         'Epic': {
             'emoji': '💎',
             'color': 'purple',
             'embed_color': 0x800080,
-            'frame_style': 'diamond purple',
-            'glow_effect': 'purple sparkle'
+            'frame_style': 'diamond purple border with sparkle effects',
+            'glow_effect': 'purple sparkle aura',
+            'text_color': 'magenta',
+            'border_style': 'ornate purple diamond frame'
         },
         'Legendary': {
             'emoji': '✨',
             'color': 'gold',
             'embed_color': 0xFFD700,
-            'frame_style': 'golden ornate',
-            'glow_effect': 'golden radiance'
+            'frame_style': 'golden ornate border with divine glow',
+            'glow_effect': 'golden divine radiance',
+            'text_color': 'gold',
+            'border_style': 'elaborate golden ornate frame'
         },
         'Limited': {
             'emoji': '🌟',
             'color': 'rainbow',
             'embed_color': 0xFF6B35,
-            'frame_style': 'cosmic rainbow',
-            'glow_effect': 'cosmic energy'
+            'frame_style': 'cosmic rainbow border with stellar energy',
+            'glow_effect': 'cosmic stellar energy',
+            'text_color': 'rainbow',
+            'border_style': 'cosmic rainbow stellar frame'
         }
     }
     return styles.get(rarity, styles['Common'])
@@ -473,7 +449,7 @@ def get_rarity_style(rarity):
 def generate_card_lore(name, rarity, ability_desc, theme="dark fantasy"):
     """Generate lore for a card using OpenAI"""
     try:
-        client = OpenAI(api_key=os.getenv('OPENAI_API_KEY'))
+        client = OpenAI(api_key=OPENAI_API_KEY)
         
         lore_prompt = f"""
         Generate a compelling lore/story for a {rarity} card named "{name}" with ability "{ability_desc}".
@@ -499,27 +475,117 @@ def generate_card_lore(name, rarity, ability_desc, theme="dark fantasy"):
         logger.error(f"Lore generation error: {e}")
         return f"A mysterious {rarity.lower()} card with unknown origins and chaotic powers."
 
+async def validate_image_quality(image_url, card_name, rarity):
+    """Validate image quality using OpenAI Vision"""
+    try:
+        client = OpenAI(api_key=OPENAI_API_KEY)
+        
+        # Download image
+        async with aiohttp.ClientSession() as session:
+            async with session.get(image_url) as resp:
+                if resp.status != 200:
+                    return False, "Failed to download image"
+                
+                image_data = await resp.read()
+        
+        # Encode image for OpenAI Vision
+        base64_image = base64.b64encode(image_data).decode('utf-8')
+        
+        validation_prompt = f"""
+        Analyze this trading card image for quality and readability:
+        
+        Card: {card_name} ({rarity})
+        
+        Check for:
+        1. Text readability - stats, name, description should be clearly visible
+        2. Frame quality - border should be intact and properly styled
+        3. Character visibility - main character should be clearly visible
+        4. Overall composition - should be vertical trading card format
+        5. No text cutoff or blurry elements
+        6. Proper contrast for text overlay
+        7. Rarity-appropriate visual styling
+        
+        Respond with: "PASS" if the image meets all quality standards, or "FAIL: [reason]" if there are issues.
+        """
+        
+        response = client.chat.completions.create(
+            model="gpt-4o",
+            messages=[
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": validation_prompt},
+                        {
+                            "type": "image_url",
+                            "image_url": {
+                                "url": f"data:image/jpeg;base64,{base64_image}"
+                            }
+                        }
+                    ]
+                }
+            ],
+            max_tokens=100,
+            temperature=0.1
+        )
+        
+        result = response.choices[0].message.content.strip()
+        logger.info(f"Image validation result: {result}")
+        
+        if result.startswith("PASS"):
+            return True, "Image quality validated"
+        else:
+            return False, result
+        
+    except Exception as e:
+        logger.error(f"Image validation error: {e}")
+        return False, f"Validation error: {str(e)}"
+
 async def generate_gacha_card(ctx, prompt=None, is_multi_pull=False):
-    """Generate a single gacha card with enhanced features"""
+    """Generate a single gacha card with enhanced visual quality control"""
     
     # Se non c'è prompt, genera un tema casuale
     if not prompt:
-        # Enhanced themes mixing dark fantasy, anime, and gacha elements
+        # Enhanced themes mixing the specific anime/game styles requested
         random_themes = [
-            "dark souls abyss watcher", "nier automata android", "one piece devil fruit user",
-            "dragon ball saiyan warrior", "final fantasy dark knight", "persona shadow creature",
-            "bloodborne hunter beast", "demon souls corrupted knight", "sekiro shadow assassin",
-            "elden ring tarnished lord", "dark souls 3 abyss dragon", "nier replicant gestalt",
-            "one piece yonko commander", "dragon ball super saiyan god", "final fantasy 7 sephiroth",
-            "persona 5 phantom thief", "bloodborne great one", "demon souls old one",
-            "sekiro divine dragon", "elden ring elden beast", "dark souls 2 darklurker",
-            "nier automata machine lifeform", "one piece ancient weapon", "dragon ball ultra instinct",
-            "final fantasy 6 kefka", "persona 4 shadow self", "bloodborne amygdala",
-            "demon souls penetrator", "sekiro guardian ape", "elden ring malenia",
-            "dark fantasy chaos demon", "anime waifu dark mage", "gacha limited edition warrior",
-            "soft hentai dark priestess", "hearthstone corrupted paladin", "nier automata 2b android",
-            "fromsoftware corrupted knight", "dark souls chaos lord", "bloodborne cosmic horror",
-            "demon souls old demon king", "sekiro immortal blade", "elden ring outer god"
+            # Jujutsu Kaisen
+            "jujutsu kaisen cursed technique user", "jujutsu kaisen domain expansion", "jujutsu kaisen cursed spirit",
+            "jujutsu kaisen sorcerer with cursed energy", "jujutsu kaisen shikigami summoner",
+            
+            # Chainsaw Man
+            "chainsaw man devil hunter", "chainsaw man hybrid form", "chainsaw man devil contract",
+            "chainsaw man public safety agent", "chainsaw man devil transformation",
+            
+            # Demon Slayer
+            "demon slayer hashira warrior", "demon slayer breathing technique user", "demon slayer demon slayer",
+            "demon slayer nichirin blade wielder", "demon slayer demon hunter",
+            
+            # Bleach
+            "bleach shinigami captain", "bleach bankai release", "bleach hollow mask",
+            "bleach zanpakuto spirit", "bleach soul reaper",
+            
+            # One Piece
+            "one piece devil fruit user", "one piece haki master", "one piece pirate captain",
+            "one piece marine admiral", "one piece ancient weapon wielder",
+            
+            # Nier Automata
+            "nier automata android 2b", "nier automata machine lifeform", "nier automata yorha unit",
+            "nier automata pod companion", "nier automata corrupted android",
+            
+            # Elden Ring / From Software
+            "elden ring tarnished lord", "elden ring outer god", "dark souls abyss watcher",
+            "bloodborne hunter beast", "sekiro shadow assassin", "demon souls corrupted knight",
+            
+            # Hearthstone / Genshin
+            "hearthstone corrupted paladin", "hearthstone legendary dragon", "genshin impact vision wielder",
+            "genshin impact archon", "genshin impact fatui harbinger",
+            
+            # Soft ecchi/hentai (SFW)
+            "anime waifu dark mage", "anime heroine battle armor", "anime warrior princess",
+            "anime magical girl dark form", "anime priestess of chaos",
+            
+            # Gacha/Heroine trends
+            "gacha limited edition warrior", "gacha ssr character", "gacha event heroine",
+            "gacha summer festival unit", "gacha valentine special character"
         ]
         prompt = random.choice(random_themes)
         logger.info(f"Gacha card - User: {ctx.author.name}, Random theme selected: {prompt}")
@@ -528,7 +594,7 @@ async def generate_gacha_card(ctx, prompt=None, is_multi_pull=False):
     
     # Step 1: Generate card data with GPT-4
     try:
-        client = OpenAI(api_key=os.getenv('OPENAI_API_KEY'))
+        client = OpenAI(api_key=OPENAI_API_KEY)
         
         # Enhanced prompt for gacha-style cards
         gpt_prompt = f"""
@@ -577,55 +643,84 @@ async def generate_gacha_card(ctx, prompt=None, is_multi_pull=False):
     # Step 2: Generate lore
     lore = generate_card_lore(name, rarity, ability_desc)
     
-    # Step 3: Generate image with Leonardo AI
+    # Step 3: Generate image with Leonardo AI with quality control
     rarity_style = get_rarity_style(rarity)
     
-    # Enhanced Leonardo prompt for gacha cards
-    leonardo_prompt = f"""A detailed gacha-style trading card: {name} ({rarity} rarity), {rarity_style['frame_style']} frame with {rarity_style['glow_effect']}, stats Attack {attack} / Health {health} at bottom, ability text '{ability_desc}', in dark fantasy chaotic art style mixed with anime/gacha aesthetics, intricate lines, {rarity_style['color']}/black/purple colors, highly readable bold gothic font for all text, high contrast, no blur, vertical card format 512x720, Pokemon x Hearthstone x Gacha crossover style, dark fantasy theme, "Chaos Deck Buddy" watermark, gacha-friendly colors"""
+    # Enhanced Leonardo prompt with specific anime/game styles
+    leonardo_prompt = f"""ultra high quality trading card, trending anime style, dynamic pose, detailed armor, epic weapon, mix of jujutsu kaisen, demon slayer, chainsaw man, nier automata, hearthstone, genshin, dark fantasy, vertical frame, chaos energy, glowing aura, waifu or hero, sharp details, high contrast, clear space for stats and text, gothic ornate border, rarity badge ({rarity.lower()}), overlay readable, no watermark, no tattoo
+
+Character: {name} ({rarity} rarity)
+Stats: Attack {attack} / Health {health}
+Ability: {ability_desc}
+Frame: {rarity_style['frame_style']} with {rarity_style['glow_effect']}
+Colors: {rarity_style['color']}/black/purple with {rarity_style['text_color']} text
+Style: {rarity_style['border_style']}, vertical format 512x720, "Chaos Deck Buddy" watermark, gacha-friendly colors, clear text overlay, no blur, no distortion"""
     
-    # Generate Image con Leonardo SDK
-    image_url = 'https://placeholder.com/512x720'
-    try:
-        leo_payload = {
-            "prompt": leonardo_prompt,
-            "modelId": "b63f7119-31dc-4540-969b-2a9df997e173",  # DreamShaper v7
-            "width": 512,
-            "height": 720,
-            "num_images": 1,
-            "negative_prompt": "blurry, low quality, multiple images, collage, text errors, distorted, tattoo, tribal, horizontal format"
-        }
-        
-        headers = {"Authorization": f"Bearer {LEONARDO_API_KEY}"}
-        
-        async with aiohttp.ClientSession() as session:
-            async with session.post("https://cloud.leonardo.ai/api/rest/v1/generations", json=leo_payload, headers=headers) as resp:
-                data = await resp.json()
-                logger.info(f"Leonardo response: {data}")
-                
-                if 'sdGenerationJob' in data:
-                    gen_id = data['sdGenerationJob']['generationId']
-                    logger.info(f"Leonardo: Generation started, gen_id: {gen_id}")
+    # Generate Image with multiple attempts for quality
+    image_url = None
+    max_attempts = 3
+    
+    for attempt in range(max_attempts):
+        try:
+            leo_payload = {
+                "prompt": leonardo_prompt,
+                "modelId": "b63f7119-31dc-4540-969b-2a9df997e173",  # DreamShaper v7
+                "width": 512,
+                "height": 720,
+                "num_images": 1,
+                "negative_prompt": "blurry, low quality, multiple images, collage, text errors, distorted, tattoo, tribal, horizontal format, watermark, signature, ugly, deformed, bad anatomy, bad proportions, extra limbs, missing limbs, floating limbs, mutated hands and fingers, out of focus, long neck, long body, mutated hands and fingers, missing arms, missing legs, extra arms, extra legs, mutated hands and fingers, bad anatomy, bad proportions, blind, bad eyes, ugly eyes, dead eyes, blur, vignette, out of shot, out of focus, gaussian, closeup, monochrome, grain, noisy, text, writing, watermark, logo, oversaturation, over saturation, over shadow"
+            }
+            
+            headers = {"Authorization": f"Bearer {LEONARDO_API_KEY}"}
+            
+            async with aiohttp.ClientSession() as session:
+                async with session.post("https://cloud.leonardo.ai/api/rest/v1/generations", 
+                                      json=leo_payload, headers=headers) as resp:
+                    data = await resp.json()
+                    logger.info(f"Leonardo response (attempt {attempt + 1}): {data}")
                     
-                    # Polling per il risultato
-                    for _ in range(30):
-                        async with session.get(f"https://cloud.leonardo.ai/api/rest/v1/generations/{gen_id}", headers=headers) as poll:
-                            poll_data = await poll.json()
-                            if poll_data.get('generations_by_pk', {}).get('generated_images'):
-                                image_url = poll_data['generations_by_pk']['generated_images'][0]['url']
-                                logger.info(f"Image generated: {image_url}")
-                                break
-                        await asyncio.sleep(5)
-                    
-                    if image_url == 'https://placeholder.com/512x720':
-                        logger.warning("Generation failed: No image ready after 30 attempts")
-                        image_url = 'https://i.imgur.com/example_card.png'  # Fallback
+                    if 'sdGenerationJob' in data:
+                        gen_id = data['sdGenerationJob']['generationId']
+                        logger.info(f"Leonardo: Generation started, gen_id: {gen_id}")
                         
-                else:
-                    logger.error(f"Leonardo error: {data}")
-                    image_url = 'https://i.imgur.com/example_card.png'  # Fallback
+                        # Polling per il risultato
+                        for _ in range(30):
+                            async with session.get(f"https://cloud.leonardo.ai/api/rest/v1/generations/{gen_id}", 
+                                                 headers=headers) as poll:
+                                poll_data = await poll.json()
+                                if poll_data.get('generations_by_pk', {}).get('generated_images'):
+                                    image_url = poll_data['generations_by_pk']['generated_images'][0]['url']
+                                    logger.info(f"Image generated (attempt {attempt + 1}): {image_url}")
+                                    
+                                    # Validate image quality
+                                    is_valid, validation_msg = await validate_image_quality(image_url, name, rarity)
+                                    
+                                    if is_valid:
+                                        logger.info(f"Image quality validated on attempt {attempt + 1}")
+                                        break
+                                    else:
+                                        logger.warning(f"Image quality check failed on attempt {attempt + 1}: {validation_msg}")
+                                        image_url = None  # Will trigger retry
+                                        break
+                            await asyncio.sleep(5)
                         
-    except Exception as e:
-        logger.error(f"Leonardo error: {str(e)}")
+                        if image_url and is_valid:
+                            break  # Success, exit retry loop
+                        else:
+                            logger.warning(f"Attempt {attempt + 1} failed, retrying...")
+                            await asyncio.sleep(2)
+                            
+                    else:
+                        logger.error(f"Leonardo error (attempt {attempt + 1}): {data}")
+                        await asyncio.sleep(2)
+                        
+        except Exception as e:
+            logger.error(f"Leonardo error (attempt {attempt + 1}): {str(e)}")
+            await asyncio.sleep(2)
+    
+    # Fallback if all attempts failed
+    if not image_url:
+        logger.error("All image generation attempts failed")
         image_url = 'https://i.imgur.com/example_card.png'  # Fallback
     
     # Step 4: Create Discord embed
