@@ -5,5 +5,4 @@ aiohttp>=3.8.0
 python-dotenv>=1.0.0
 pydub>=0.25.1
 stripe>=7.0.0
-flask>=3.0.0
-ngrok>=0.0.1 
+flask>=3.0.0 

@@ -10,12 +10,15 @@ import random
 import asyncio
 from pydub import AudioSegment
 import os
+import json
 from dotenv import load_dotenv
 import stripe
 from datetime import datetime, timedelta
 from flask import Flask, request, jsonify
 from threading import Thread
 import logging
+import signal
+import sys
 
 load_dotenv()
 
@@ -98,165 +101,115 @@ def stripe_webhook():
         item_id = session.get('metadata', {}).get('item_id')
         
         if user_id and item_id:
-            # Process the purchase
             process_purchase(user_id, item_id, session['id'])
         else:
-            logger.warning(f"Missing metadata in session {session['id']}")
-            
-    elif event['type'] == 'payment_intent.succeeded':
-        payment_intent = event['data']['object']
-        logger.info(f"Payment succeeded: {payment_intent['id']}")
-        
-    elif event['type'] == 'payment_intent.payment_failed':
-        payment_intent = event['data']['object']
-        logger.warning(f"Payment failed: {payment_intent['id']}")
-        
+            logger.warning(f"No user_id or item_id in session metadata: {session.get('metadata', {})}")
+    
     return 'OK', 200
 
 def process_purchase(user_id, item_id, session_id):
-    """Process a successful purchase and award rewards"""
+    """Process a completed purchase"""
+    logger.info(f"Processing purchase: user={user_id}, item={item_id}, session={session_id}")
+    
     try:
-        # Get user from Discord
-        user = bot.get_user(int(user_id))
-        if not user:
-            logger.warning(f"User {user_id} not found")
-            return
-            
-        # Define items and their rewards
-        items = {
-            "booster": {
-                "name": "Epic Booster Pack", 
-                "price": 200, 
-                "currency": "usd", 
-                "rewards": "5 rare cards",
-                "action": "award_booster_pack"
-            },
-            "legendary": {
-                "name": "Legendary Pack", 
-                "price": 500, 
-                "currency": "usd", 
-                "rewards": "3 legendary cards",
-                "action": "award_legendary_pack"
-            },
-            "streak_saver": {
-                "name": "Streak Saver", 
-                "price": 50, 
-                "currency": "usd", 
-                "rewards": "Reset daily cooldown",
-                "action": "reset_daily_cooldown"
-            },
-            "pity_booster": {
-                "name": "Pity Booster", 
-                "price": 100, 
-                "currency": "usd", 
-                "rewards": "Reduce pity by 10",
-                "action": "reduce_pity"
-            },
-            "achievement_booster": {
-                "name": "Achievement Booster", 
-                "price": 50, 
-                "currency": "usd", 
-                "rewards": "Auto-unlock next achievement",
-                "action": "unlock_next_achievement"
-            },
-            "fusion_crystal": {
-                "name": "Fusion Crystal", 
-                "price": 100, 
-                "currency": "usd", 
-                "rewards": "Guarantee fusion success",
-                "action": "add_fusion_crystal"
-            },
-            "event_booster": {
-                "name": "Event Booster", 
-                "price": 100, 
-                "currency": "usd", 
-                "rewards": "Extra drops during events",
-                "action": "add_event_booster"
-            }
-        }
-        
-        if item_id not in items:
-            logger.warning(f"Invalid item_id: {item_id}")
-            return
-            
-        item = items[item_id]
-        
-        # Log the purchase
-        logger.info(f"Processing purchase: {user.name} bought {item['name']} (Session: {session_id})")
-        
-        # Award rewards based on item type
-        if item_id == "booster":
+        # Add points based on item
+        points_to_add = 0
+        if item_id == 'booster_pack':
+            points_to_add = 100
             award_booster_pack(user_id)
-        elif item_id == "legendary":
+        elif item_id == 'legendary_pack':
+            points_to_add = 500
             award_legendary_pack(user_id)
-        elif item_id == "streak_saver":
+        elif item_id == 'daily_reset':
+            points_to_add = 50
             reset_daily_cooldown(user_id)
-        elif item_id == "pity_booster":
+        elif item_id == 'pity_reduction':
+            points_to_add = 200
             reduce_pity(user_id)
-        elif item_id == "achievement_booster":
+        elif item_id == 'achievement_unlock':
+            points_to_add = 300
             unlock_next_achievement(user_id)
-        elif item_id == "fusion_crystal":
+        elif item_id == 'fusion_crystal':
+            points_to_add = 150
             add_fusion_crystal(user_id)
-        elif item_id == "event_booster":
+        elif item_id == 'event_booster':
+            points_to_add = 250
             add_event_booster(user_id)
-            
-        # Send confirmation message
-        asyncio.run_coroutine_threadsafe(
-            user.send(f"🎉 **Purchase Successful!**\n"
-                     f"You bought: **{item['name']}**\n"
-                     f"Rewards: **{item['rewards']}**\n"
-                     f"Thank you for your purchase!"),
-            bot.loop
-        )
+        
+        if points_to_add > 0:
+            # Add points to user
+            c.execute("INSERT OR IGNORE INTO users VALUES (?, 0, 1, NULL, 0, 0)", (user_id,))
+            c.execute("UPDATE users SET points = points + ? WHERE user_id=?", (points_to_add, user_id))
+            conn.commit()
+            logger.info(f"Added {points_to_add} points to user {user_id}")
         
     except Exception as e:
         logger.error(f"Error processing purchase: {e}")
 
 def award_booster_pack(user_id):
-    """Award 5 rare cards to user"""
-    # Simulate 5 rare chaos pulls
-    for _ in range(5):
-        # Generate a rare card (you can customize this logic)
-        card_name = f"Rare Card {random.randint(1000, 9999)}"
-        # Add to user's inventory (implement your card storage logic)
-        logger.info(f"Awarded rare card to user {user_id}")
+    """Award a booster pack to user"""
+    logger.info(f"Awarding booster pack to user {user_id}")
+    # Implementation for booster pack logic
 
 def award_legendary_pack(user_id):
-    """Award 3 legendary cards to user"""
-    for _ in range(3):
-        card_name = f"Legendary Card {random.randint(1000, 9999)}"
-        logger.info(f"Awarded legendary card to user {user_id}")
+    """Award a legendary pack to user"""
+    logger.info(f"Awarding legendary pack to user {user_id}")
+    # Implementation for legendary pack logic
 
 def reset_daily_cooldown(user_id):
-    """Reset user's daily cooldown"""
-    c.execute("UPDATE users SET last_daily = NULL WHERE user_id = ?", (user_id,))
+    """Reset daily cooldown for user"""
+    logger.info(f"Resetting daily cooldown for user {user_id}")
+    c.execute("UPDATE users SET last_daily = NULL WHERE user_id=?", (user_id,))
     conn.commit()
-    logger.info(f"Reset daily cooldown for user {user_id}")
 
 def reduce_pity(user_id):
-    """Reduce user's pity count by 10"""
-    c.execute("UPDATE users SET pity_count = MAX(0, pity_count - 10) WHERE user_id = ?", (user_id,))
+    """Reduce pity counter for user"""
+    logger.info(f"Reducing pity for user {user_id}")
+    c.execute("UPDATE users SET pity_count = GREATEST(pity_count - 1, 0) WHERE user_id=?", (user_id,))
     conn.commit()
-    logger.info(f"Reduced pity for user {user_id}")
 
 def unlock_next_achievement(user_id):
-    """Auto-unlock next achievement"""
-    # Implement achievement unlocking logic
-    logger.info(f"Unlocked next achievement for user {user_id}")
+    """Unlock next achievement for user"""
+    logger.info(f"Unlocking next achievement for user {user_id}")
+    # Implementation for achievement unlocking
 
 def add_fusion_crystal(user_id):
     """Add fusion crystal to user"""
-    # Implement fusion crystal logic
-    logger.info(f"Added fusion crystal to user {user_id}")
+    logger.info(f"Adding fusion crystal to user {user_id}")
+    # Implementation for fusion crystal
 
 def add_event_booster(user_id):
     """Add event booster to user"""
-    # Implement event booster logic
-    logger.info(f"Added event booster to user {user_id}")
+    logger.info(f"Adding event booster to user {user_id}")
+    # Implementation for event booster
 
 def run_flask():
+    """Run Flask server for webhook handling"""
     port = int(os.environ.get('PORT', 5000))
+    logger.info(f"Starting Flask server on port {port}")
     app.run(host='0.0.0.0', port=port, debug=False)
+
+# Graceful shutdown handler
+def signal_handler(signum, frame):
+    """Handle graceful shutdown"""
+    logger.info(f"Received signal {signum}, shutting down gracefully...")
+    
+    # Close database connection
+    if 'conn' in globals():
+        conn.close()
+        logger.info("Database connection closed")
+    
+    # Logout Discord bot
+    if bot.is_ready():
+        asyncio.create_task(bot.close())
+        logger.info("Discord bot logged out")
+    
+    logger.info("Graceful shutdown completed")
+    sys.exit(0)
+
+# Register signal handlers
+signal.signal(signal.SIGTERM, signal_handler)
+signal.signal(signal.SIGINT, signal_handler)
 
 # DB Setup
 conn = sqlite3.connect('chaos.db')
@@ -286,11 +239,14 @@ async def on_ready():
     
     print(f'Chaos Deck AI online! 🚀 Flask running on port {port}')
     print(f'Webhook URL: {webhook_url}')
+    logger.info(f"Bot logged in as {bot.user.name} (ID: {bot.user.id})")
+    logger.info(f"Flask server configured for port {port}")
+    logger.info(f"Webhook URL: {webhook_url}")
     
     # Avvia Flask server in background
     flask_thread = Thread(target=run_flask, daemon=True)
     flask_thread.start()
-    print(f'Flask server avviato in background sulla porta {port}')
+    logger.info(f'Flask server avviato in background sulla porta {port}')
     
     # Initialize DB on ready
     c.execute('''CREATE TABLE IF NOT EXISTS users (user_id TEXT PRIMARY KEY, points INT DEFAULT 0, level INT DEFAULT 1, last_daily TEXT, streak INT DEFAULT 0, pity_count INT DEFAULT 0)''')
@@ -300,6 +256,7 @@ async def on_ready():
     c.execute('''CREATE TABLE IF NOT EXISTS achievements (achievement_id TEXT PRIMARY KEY, name TEXT, description TEXT, points_reward INT, requirement_type TEXT, requirement_value INT)''')
     c.execute('''CREATE TABLE IF NOT EXISTS user_achievements (user_id TEXT, achievement_id TEXT, unlocked_date TEXT, PRIMARY KEY (user_id, achievement_id))''')
     conn.commit()
+    logger.info("Database tables initialized successfully")
     
     logger.info(f"Hardcoded models available: {len(available_models)} total")
     
@@ -342,6 +299,7 @@ async def on_ready():
     for achievement in achievements_data:
         c.execute("INSERT OR IGNORE INTO achievements VALUES (?, ?, ?, ?, ?, ?)", achievement)
     conn.commit()
+    logger.info("Achievements initialized successfully")
 
 async def add_points(user_id, points, ctx=None):
     c.execute("INSERT OR IGNORE INTO users VALUES (?, 0, 1, NULL, 0, 0)", (user_id,))
@@ -439,271 +397,166 @@ def get_user_achievements(user_id):
     return c.fetchall()
 
 @bot.command(name='chaos')
-@commands.cooldown(1, 300, commands.BucketType.user)
-async def chaos(ctx, *args):
-    # Argument parsing
-    mode = 'solo'
-    theme = 'random'
-    target = None
+@commands.cooldown(1, 30, commands.BucketType.user)  # 30 second cooldown
+async def chaos(ctx, *, prompt: str = None):
+    """
+    Genera carte AI stile Pokemon x Hearthstone con prompt personalizzato.
+    Uso: !chaos <prompt> (es. "!chaos demonic tattoo dragon")
+    """
     
-    if args:
-        # First argument can be mode or theme
-        if args[0].lower() in ['solo', 'pvp', 'pve']:
-            mode = args[0].lower()
-            if len(args) > 1:
-                theme = args[1].lower()
-                if len(args) > 2:
-                    # Third argument is target for PvP
-                    target = discord.utils.get(ctx.guild.members, name=args[2])
-        else:
-            # First argument is theme
-            theme = args[0].lower()
-            if len(args) > 1:
-                if args[1].lower() in ['solo', 'pvp', 'pve']:
-                    mode = args[1].lower()
-                    if len(args) > 2:
-                        target = discord.utils.get(ctx.guild.members, name=args[2])
-                else:
-                    # Second argument is target
-                    target = discord.utils.get(ctx.guild.members, name=args[1])
+    if not prompt:
+        await ctx.send("❌ **Errore:** Devi fornire un prompt! Esempio: `!chaos demonic tattoo dragon`")
+        return
     
-    if theme not in THEMES: 
-        theme = 'random'
+    logger.info(f"Chaos command - User: {ctx.author.name}, Prompt: {prompt}")
     
-    logger.info(f"Chaos command - User: {ctx.author.name}, Theme: {theme}, Mode: {mode}")
+    # Step 1: Usa OpenAI (GPT-4) per generare dettagli strutturati
+    await ctx.send("🔮 **Step 1:** Generando dettagli della carta con GPT-4...")
     
-    # Get user level for rarity boost
-    c.execute("SELECT level FROM users WHERE user_id=?", (str(ctx.author.id),))
-    user_level = c.fetchone()
-    user_level = user_level[0] if user_level else 1
-    
-    # Get pity count
-    c.execute("SELECT pity_count FROM users WHERE user_id=?", (str(ctx.author.id),))
-    pity_count = c.fetchone()[0] if c.fetchone() else 0
-    
-    # Adjust rarity based on level and pity
-    if user_level >= 5:
-        rarity_weights = ['Common']*35 + ['Rare']*30 + ['Epic']*20 + ['Legendary']*15
-    else:
-        rarity_weights = ['Common']*40 + ['Rare']*30 + ['Epic']*20 + ['Legendary']*10
-    
-    rarity = random.choice(rarity_weights)
-    
-    # Check for active events and apply bonuses
-    active_events = get_active_events()
-    event_bonus = None
-    for event in active_events:
-        if event["theme"] == theme:
-            if event["bonus"] == "epic_boost":
-                # Increase Epic chance during Seven Deadly Sins event
-                if rarity == 'Common' and random.random() < 0.2:
-                    rarity = 'Epic'
-                    event_bonus = "🎭 Event Bonus: Upgraded to Epic!"
-            elif event["bonus"] == "legendary_boost":
-                # Increase Legendary chance during Dragon Ball event
-                if rarity in ['Common', 'Rare'] and random.random() < 0.15:
-                    rarity = 'Legendary'
-                    event_bonus = "🎭 Event Bonus: Upgraded to Legendary!"
-            elif event["bonus"] == "rare_boost":
-                # Increase Rare chance during Evangelion event
-                if rarity == 'Common' and random.random() < 0.25:
-                    rarity = 'Rare'
-                    event_bonus = "🎭 Event Bonus: Upgraded to Rare!"
-    
-    # Pity system: Force Legendary if pity >= 50
-    if pity_count >= 50 and rarity != 'Legendary':
-        rarity = 'Legendary'
-        await ctx.send("🎉 **Pity Legendary!** Your patience has been rewarded!")
-    
-    # Update pity count
-    if rarity == 'Legendary':
-        new_pity_count = 0  # Reset pity on Legendary
-    else:
-        new_pity_count = pity_count + 1
-    
-    c.execute("UPDATE users SET pity_count = ? WHERE user_id=?", (new_pity_count, str(ctx.author.id)))
-    conn.commit()
-    
-    # Addictive pull animation
-    await ctx.send("🔮 Summoning chaotic energies...")
-    await asyncio.sleep(1)
-    await ctx.send("✨ Infusing with crossover powers...")
-    await asyncio.sleep(1)
-    await ctx.send("🃏 Revealing your card!")
-    
-    # Generate name with English prompt
-    name_prompt = f"Generate a unique name for a {rarity} card in {theme} theme. Respond in English only. Only return the name, nothing else."
-    client = OpenAI(api_key=os.getenv('OPENAI_API_KEY'))
-    name_response = client.chat.completions.create(
-        model="gpt-3.5-turbo", 
-        messages=[{"role": "user", "content": name_prompt}], 
-        max_tokens=50
-    )
-    name = name_response.choices[0].message.content.strip()
-    
-    # Generate description with English prompt
-    desc_prompt = f"Generate an exciting, chaotic description for a {rarity} gacha card named '{name}' in a crossover game with themes from One Piece, Dragon Ball, Evangelion, and From Software, inspired by {theme} universe. Respond in English only. Make it 3-5 punchy sentences: Focus on unique, unpredictable abilities, epic lore tie-ins, and addictive gameplay hooks (e.g., random buffs/debuffs, universe collisions). Keep it immersive and fun, like a real trading card game – no generic intros, be specific!"
-    response = client.chat.completions.create(
-        model="gpt-3.5-turbo", 
-        messages=[{"role": "user", "content": desc_prompt}], 
-        max_tokens=200
-    )
-    desc = response.choices[0].message.content.strip()
-    
-    # Truncate desc if too long for Discord embed
-    if len(desc) > 1024:
-        desc = desc[:1021] + '...'
-    
-    power = random.randint(10, 100) * (4 if rarity == 'Legendary' else 1)
-    special = "Chaos Boost" if random.random() > 0.5 else "Power Drain"
-
-    # Generate Image (Leonardo AI - poll for result)
-    leo_payload = {
-        "prompt": f"Generate a HIGH-QUALITY SINGLE trading card ONLY in {rarity} gacha style, themed around {theme}: Title '{name}' centered at top, detailed central illustration based on '{desc}', glowing {rarity} borders, anime/JRPG vibe inspired by One Piece/Dragon Ball/Evangelion/From Software with {theme} elements, high resolution, no text overlays except title. Card frame like Yu-Gi-Oh.", 
-        "modelId": random.choice(available_models),
-        "width": 512, 
-        "height": 768, 
-        "num_images": 1,
-        "negative_prompt": "multiple images, blurry, low quality, collage, extra elements"
-    }
-    logger.info(f"Selected model for this generation: {leo_payload['modelId']}")
-    headers = {"Authorization": f"Bearer {LEONARDO_API_KEY}"}
-    
-    image_url = 'https://placeholder.com/512x768'
     try:
+        client = OpenAI(api_key=os.getenv('OPENAI_API_KEY'))
+        
+        # Prompt per GPT-4 per generare dettagli strutturati
+        gpt_prompt = f"""
+        Genera una carta da gioco stile Pokemon x Hearthstone basata su questo prompt: "{prompt}"
+        
+        Rispondi SOLO con un JSON valido nel seguente formato:
+        {{
+            "name": "Nome della carta",
+            "rarity": "Common/Rare/Epic/Legendary",
+            "attack": numero_attacco,
+            "health": numero_vita,
+            "ability_desc": "Descrizione breve dell'abilità (max 100 caratteri)"
+        }}
+        
+        Regole:
+        - Nome: creativo e tematico
+        - Rarity: distribuzione naturale (Common 40%, Rare 30%, Epic 20%, Legendary 10%)
+        - Attack: 1-10 per Common, 2-12 per Rare, 3-15 per Epic, 5-20 per Legendary
+        - Health: 1-8 per Common, 2-10 per Rare, 3-12 per Epic, 5-15 per Legendary
+        - Ability: breve e potente, stile Hearthstone
+        """
+        
+        response = client.chat.completions.create(
+            model="gpt-4",
+            messages=[{"role": "user", "content": gpt_prompt}],
+            max_tokens=300,
+            temperature=0.8
+        )
+        
+        # Parsing della risposta JSON
+        card_data = json.loads(response.choices[0].message.content.strip())
+        
+        name = card_data["name"]
+        rarity = card_data["rarity"]
+        attack = card_data["attack"]
+        health = card_data["health"]
+        ability_desc = card_data["ability_desc"]
+        
+        logger.info(f"Card data generated: {name} ({rarity}) - {attack}/{health}")
+        
+    except Exception as e:
+        logger.error(f"GPT-4 error: {e}")
+        await ctx.send(f"❌ **Errore GPT-4:** {str(e)}")
+        return
+    
+    # Step 2: Crea prompt Leonardo dettagliato
+    await ctx.send("🎨 **Step 2:** Generando immagine con Leonardo AI...")
+    
+    # Colori per rarity
+    rarity_colors = {
+        'Common': 'silver',
+        'Rare': 'blue', 
+        'Epic': 'purple',
+        'Legendary': 'gold'
+    }
+    
+    color = rarity_colors.get(rarity, 'silver')
+    
+    # Prompt Leonardo dettagliato
+    leonardo_prompt = f"""A Hearthstone-style card illustration: {name} creature, {rarity} border color ({color}), stats {attack}/{health} at bottom, ability text '{ability_desc}', in dark fantasy tattoo art style, highly detailed, readable text overlay in bold gothic font, no blurry elements, high resolution 512x720, Pokemon x Hearthstone crossover style"""
+    
+    # Generate Image con Leonardo SDK
+    image_url = 'https://placeholder.com/512x720'
+    try:
+        leo_payload = {
+            "prompt": leonardo_prompt,
+            "modelId": "b63f7119-31dc-4540-969b-2a9df997e173",  # DreamShaper v7 o simile
+            "width": 512,
+            "height": 720,
+            "num_images": 1,
+            "negative_prompt": "blurry, low quality, multiple images, collage, text errors, distorted"
+        }
+        
+        headers = {"Authorization": f"Bearer {LEONARDO_API_KEY}"}
+        
         async with aiohttp.ClientSession() as session:
             async with session.post("https://cloud.leonardo.ai/api/rest/v1/generations", json=leo_payload, headers=headers) as resp:
                 data = await resp.json()
-                logger.info(f"Response from post: {data}")
-                gen_id = data['sdGenerationJob']['generationId']
-                logger.info(f"Leonardo: Generation started, gen_id: {gen_id}")
+                logger.info(f"Leonardo response: {data}")
                 
-                for _ in range(30):
-                    async with session.get(f"https://cloud.leonardo.ai/api/rest/v1/generations/{gen_id}", headers=headers) as poll:
-                        poll_data = await poll.json()
-                        logger.debug(f"Polling {_+1}: {poll_data}")
-                        if poll_data['generations_by_pk']['generated_images']:
-                            image_url = poll_data['generations_by_pk']['generated_images'][0]['url']
-                            logger.info(f"Image generated: {image_url}")
-                            break
-                    await asyncio.sleep(5)
-                
-                if image_url == 'https://placeholder.com/512x768':
-                    logger.warning("Generation failed: No image ready after 30 attempts")
-                    await ctx.send("Image not generated – retry or check Leonardo credits!")
+                if 'sdGenerationJob' in data:
+                    gen_id = data['sdGenerationJob']['generationId']
+                    logger.info(f"Leonardo: Generation started, gen_id: {gen_id}")
+                    
+                    # Polling per il risultato
+                    for _ in range(30):
+                        async with session.get(f"https://cloud.leonardo.ai/api/rest/v1/generations/{gen_id}", headers=headers) as poll:
+                            poll_data = await poll.json()
+                            if poll_data.get('generations_by_pk', {}).get('generated_images'):
+                                image_url = poll_data['generations_by_pk']['generated_images'][0]['url']
+                                logger.info(f"Image generated: {image_url}")
+                                break
+                        await asyncio.sleep(5)
+                    
+                    if image_url == 'https://placeholder.com/512x720':
+                        logger.warning("Generation failed: No image ready after 30 attempts")
+                        image_url = 'https://i.imgur.com/example_card.png'  # Fallback
+                        
+                else:
+                    logger.error(f"Leonardo error: {data}")
+                    image_url = 'https://i.imgur.com/example_card.png'  # Fallback
                         
     except Exception as e:
-        logger.error(f"Detailed Leonardo error: {str(e)} - Status: {resp.status if 'resp' in locals() else 'unknown'} - Response: {await resp.text() if 'resp' in locals() else 'no response'}")
-        await ctx.send(f"Image error: {str(e)} – Check model ID or API.")
+        logger.error(f"Leonardo error: {str(e)}")
+        image_url = 'https://i.imgur.com/example_card.png'  # Fallback
     
-    # Fallback if image not generated
-    if image_url == 'https://placeholder.com/512x768':
-        image_url = 'https://i.imgur.com/example_card.png'  # Fallback URL
-
-    # Save to DB
-    card_id = str(random.randint(100000, 999999))
-    c.execute("INSERT INTO cards VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)", 
-              (card_id, str(ctx.author.id), rarity, name, desc, image_url, power, special, theme))
-    conn.commit()
+    # Output: Embed Discord con immagine + testo formattato
+    await ctx.send("📋 **Step 3:** Creando embed finale...")
     
-    # Check for badges and achievements
-    c.execute("SELECT COUNT(*) FROM cards WHERE user_id=?", (str(ctx.author.id),))
-    total_cards = c.fetchone()[0]
-    if total_cards >= 50:
-        unlock_badge(str(ctx.author.id), "🃏 Pull Master", "50+ cards pulled!")
-    if total_cards >= 100:
-        unlock_badge(str(ctx.author.id), "🎴 Card Collector", "100+ cards in collection!")
-    
-    # Check achievements
-    await check_achievements(str(ctx.author.id), ctx)
-
-    # Audio if in voice (ElevenLabs) with voice channel check
-    if ctx.author.voice and ctx.author.voice.channel:
-        try:
-            el_payload = {'text': desc, 'model_id': 'eleven_monolingual_v1'}
-            el_resp = requests.post(
-                'https://api.elevenlabs.io/v1/text-to-speech/21m00Tcm4TlvDq8ikWAM', 
-                headers={'xi-api-key': ELEVENLABS_API_KEY, 'Content-Type': 'application/json'}, 
-                json=el_payload
-            )
-            if el_resp.status_code == 200:
-                audio = AudioSegment.from_file(BytesIO(el_resp.content), format="mp3")
-                audio.export("temp.mp3", format="mp3")
-                vc = await ctx.author.voice.channel.connect()
-                vc.play(discord.FFmpegPCMAudio("temp.mp3"))
-                while vc.is_playing(): 
-                    await asyncio.sleep(1)
-                await vc.disconnect()
-                os.remove("temp.mp3")
-        except Exception as e:
-            logger.error(f"ElevenLabs audio error: {e}")
-
-    # Colori rarity
-    rarity_colors = {
+    # Colori per embed
+    embed_colors = {
         'Common': 0xC0C0C0,    # Silver
-        'Rare': 0x0000FF,       # Blue
+        'Rare': 0x0000FF,       # Blue  
         'Epic': 0x800080,       # Purple
         'Legendary': 0xFFD700    # Gold
     }
-    embed_color = rarity_colors.get(rarity, 0x00FF00)
     
-    # Embed migliorato
-    embed = discord.Embed(title=f"{rarity} Card: {name}", color=embed_color)
-    embed.add_field(name="Power", value=power, inline=True)
-    embed.add_field(name="Special", value=special, inline=True)
-    embed.add_field(name="Description", value=f"*{desc}*", inline=False)  # Italics per vibe narrativa
+    embed_color = embed_colors.get(rarity, 0x00FF00)
+    
+    # Embed formattato
+    embed = discord.Embed(
+        title=f"🎴 {name}",
+        description=f"**Rarity:** {rarity}\n**Stats:** {attack}/{health}\n**Ability:** {ability_desc}",
+        color=embed_color
+    )
+    
     embed.set_image(url=image_url)
-    
-    # Thumbnail per rarity
-    rarity_icons = {
-        'Common': "https://cdn.discordapp.com/emojis/1107.png",
-        'Rare': "https://cdn.discordapp.com/emojis/1108.png", 
-        'Epic': "https://cdn.discordapp.com/emojis/1109.png",
-        'Legendary': "https://cdn.discordapp.com/emojis/1110.png"
-    }
-    embed.set_thumbnail(url=rarity_icons.get(rarity, "https://cdn.discordapp.com/emojis/1107.png"))
-    
-    # Footer with badges and pity
-    user_badges = get_user_badges(str(ctx.author.id))
-    badges_str = " ".join(user_badges) if user_badges else ""
-    embed.set_footer(text=f"🚀 Powered by Chaos | Level: {level} | Pity: {new_pity_count}/50 {badges_str}")
+    embed.set_footer(text=f"🎮 Generated by {ctx.author.name} | Prompt: {prompt}")
     
     await ctx.send(embed=embed)
-    await ctx.send("*(See embed above for details)*")  # Fallback text for log
     
-    # Show event bonus if applicable
-    if event_bonus:
-        await ctx.send(event_bonus)
-
-    points = power // 10
-    total, level = await add_points(str(ctx.author.id), points, ctx)
-    await ctx.send(f"{ctx.author.mention} gained {points} points! Total: {total} | Level: {level}")
+    # Salva nel database
+    try:
+        card_id = str(random.randint(100000, 999999))
+        c.execute("INSERT INTO cards VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)", 
+                  (card_id, str(ctx.author.id), rarity, name, ability_desc, image_url, attack, health, "chaos_generated"))
+        conn.commit()
+        logger.info(f"Card saved to database: {card_id}")
+    except Exception as e:
+        logger.error(f"Database error: {e}")
     
-    # Random bonus reward
-    if random.random() > 0.7:
-        extra_points = 50
-        await add_points(str(ctx.author.id), extra_points, ctx)
-        await ctx.send(f"🎉 Bonus! +{extra_points} points!")
-
-    # Modes (PvP/PvE stub - expand)
-    if mode == 'pvp' and target:
-        await ctx.send("PvP mode: AI judging... (Implement full logic)")
-        # Basic PvP logic
-        pvp_prompt = f"Judge a card battle between {ctx.author.name} and {target.name}. Respond in English only. Winner is [user] because [reason]."
-        try:
-            pvp_response = client.chat.completions.create(
-                model="gpt-3.5-turbo", 
-                messages=[{"role": "user", "content": pvp_prompt}], 
-                max_tokens=100
-            )
-            result = pvp_response.choices[0].message.content.strip()
-            await ctx.send(f"🏆 PvP Result: {result}")
-        except Exception as e:
-            await ctx.send("Error in PvP judgment")
-    elif mode == 'pve':
-        await ctx.send("PvE mode: Group quest started!")
-        # Redirect to campaign system
-        await campaign(ctx, "start", theme)
+    await ctx.send("✅ **Carta generata con successo!** 🎉")
 
 @bot.command(name='daily')
 async def daily(ctx):
