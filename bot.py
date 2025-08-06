@@ -255,6 +255,12 @@ async def on_ready():
     c.execute('''CREATE TABLE IF NOT EXISTS badges (user_id TEXT, badge_name TEXT, PRIMARY KEY (user_id, badge_name))''')
     c.execute('''CREATE TABLE IF NOT EXISTS achievements (achievement_id TEXT PRIMARY KEY, name TEXT, description TEXT, points_reward INT, requirement_type TEXT, requirement_value INT)''')
     c.execute('''CREATE TABLE IF NOT EXISTS user_achievements (user_id TEXT, achievement_id TEXT, unlocked_date TEXT, PRIMARY KEY (user_id, achievement_id))''')
+    
+    # New tables for gacha system
+    c.execute('''CREATE TABLE IF NOT EXISTS card_lore (card_id TEXT PRIMARY KEY, lore TEXT, story_requests INT DEFAULT 0)''')
+    c.execute('''CREATE TABLE IF NOT EXISTS pull_history (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id TEXT, pull_type TEXT, cards_generated TEXT, timestamp TEXT)''')
+    c.execute('''CREATE TABLE IF NOT EXISTS server_announcements (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id TEXT, card_name TEXT, rarity TEXT, timestamp TEXT)''')
+    
     conn.commit()
     logger.info("Database tables initialized successfully")
     
@@ -293,7 +299,10 @@ async def on_ready():
         ("campaign_veteran", "Campaign Veteran", "Complete 3 campaigns", 400, "campaigns", 3),
         ("fusion_expert", "Fusion Expert", "Successfully fuse 5 cards", 600, "fusions", 5),
         ("chaos_puller", "Chaos Puller", "Pull 100 cards total", 1000, "cards", 100),
-        ("daily_warrior", "Daily Warrior", "Claim 30 daily rewards", 800, "dailies", 30)
+        ("daily_warrior", "Daily Warrior", "Claim 30 daily rewards", 800, "dailies", 30),
+        ("gacha_master", "Gacha Master", "Pull 50 cards in one session", 1500, "gacha_pulls", 50),
+        ("legendary_collector", "Legendary Collector", "Collect 10 legendary cards", 2000, "legendary", 10),
+        ("limited_hunter", "Limited Hunter", "Pull 3 limited cards", 3000, "limited", 3)
     ]
     
     for achievement in achievements_data:
@@ -301,6 +310,7 @@ async def on_ready():
     conn.commit()
     logger.info("Achievements initialized successfully")
 
+# Gacha system functions
 async def add_points(user_id, points, ctx=None):
     c.execute("INSERT OR IGNORE INTO users VALUES (?, 0, 1, NULL, 0, 0)", (user_id,))
     c.execute("UPDATE users SET points = points + ? WHERE user_id=?", (points, user_id))
@@ -375,6 +385,14 @@ async def check_achievements(user_id, ctx=None):
             c.execute("SELECT daily_count FROM users WHERE user_id=?", (user_id,))
             daily_count = c.fetchone()[0] if c.fetchone() else 0
             unlocked = daily_count >= req_value
+        elif req_type == "gacha_pulls":
+            c.execute("SELECT COUNT(*) FROM pull_history WHERE user_id=? AND pull_type='multi'", (user_id,))
+            count = c.fetchone()[0]
+            unlocked = count >= req_value
+        elif req_type == "limited":
+            c.execute("SELECT COUNT(*) FROM cards WHERE user_id=? AND rarity='Limited'", (user_id,))
+            count = c.fetchone()[0]
+            unlocked = count >= req_value
         
         if unlocked:
             # Unlock achievement
@@ -396,20 +414,99 @@ def get_user_achievements(user_id):
     """, (user_id,))
     return c.fetchall()
 
-@bot.command(name='chaos')
-@commands.cooldown(1, 30, commands.BucketType.user)  # 30 second cooldown
-async def chaos(ctx, *, prompt: str = None):
-    """
-    Genera carte AI stile Pokemon x Hearthstone con prompt personalizzato.
-    Uso: !chaos <prompt> (es. "!chaos fiery chaos dragon")
-    Se usato senza prompt, genera una carta basata su temi casuali.
-    """
+def get_rarity_distribution():
+    """Get rarity based on gacha distribution with pity system"""
+    # Base distribution: Common 50%, Rare 30%, Epic 15%, Legendary 4%, Limited 1%
+    rand = random.random()
+    if rand < 0.50:
+        return "Common"
+    elif rand < 0.80:
+        return "Rare"
+    elif rand < 0.95:
+        return "Epic"
+    elif rand < 0.99:
+        return "Legendary"
+    else:
+        return "Limited"
+
+def get_rarity_style(rarity):
+    """Get visual style elements for each rarity"""
+    styles = {
+        'Common': {
+            'emoji': '⚪',
+            'color': 'silver',
+            'embed_color': 0xC0C0C0,
+            'frame_style': 'simple metallic',
+            'glow_effect': 'subtle'
+        },
+        'Rare': {
+            'emoji': '🔵',
+            'color': 'blue',
+            'embed_color': 0x0000FF,
+            'frame_style': 'crystalline blue',
+            'glow_effect': 'blue aura'
+        },
+        'Epic': {
+            'emoji': '💎',
+            'color': 'purple',
+            'embed_color': 0x800080,
+            'frame_style': 'diamond purple',
+            'glow_effect': 'purple sparkle'
+        },
+        'Legendary': {
+            'emoji': '✨',
+            'color': 'gold',
+            'embed_color': 0xFFD700,
+            'frame_style': 'golden ornate',
+            'glow_effect': 'golden radiance'
+        },
+        'Limited': {
+            'emoji': '🌟',
+            'color': 'rainbow',
+            'embed_color': 0xFF6B35,
+            'frame_style': 'cosmic rainbow',
+            'glow_effect': 'cosmic energy'
+        }
+    }
+    return styles.get(rarity, styles['Common'])
+
+def generate_card_lore(name, rarity, ability_desc, theme="dark fantasy"):
+    """Generate lore for a card using OpenAI"""
+    try:
+        client = OpenAI(api_key=os.getenv('OPENAI_API_KEY'))
+        
+        lore_prompt = f"""
+        Generate a compelling lore/story for a {rarity} card named "{name}" with ability "{ability_desc}".
+        
+        Style: Anime/gacha/dark fantasy, chaotic, ironic, and dramatic. Include:
+        - Origin story (2-3 sentences)
+        - Power level and significance
+        - Connection to the chaotic realm
+        - A memorable quote or catchphrase
+        
+        Make it engaging and fitting for a {rarity} rarity card. Respond in English only.
+        """
+        
+        response = client.chat.completions.create(
+            model="gpt-4",
+            messages=[{"role": "user", "content": lore_prompt}],
+            max_tokens=200,
+            temperature=0.9
+        )
+        
+        return response.choices[0].message.content.strip()
+    except Exception as e:
+        logger.error(f"Lore generation error: {e}")
+        return f"A mysterious {rarity.lower()} card with unknown origins and chaotic powers."
+
+async def generate_gacha_card(ctx, prompt=None, is_multi_pull=False):
+    """Generate a single gacha card with enhanced features"""
     
     # Se non c'è prompt, genera un tema casuale
     if not prompt:
-        # Temi ispirati a jrpg, dark souls, nier automata, one piece, dragon ball, etc.
+        # Enhanced themes mixing dark fantasy, anime, and gacha elements
         random_themes = [
-            "dark souls abyss watcher", "nier automata android", "one piece devil fruit user", 
+            "dark souls abyss watcher", "nier automata android", "one piece devil fruit user",
             "dragon ball saiyan warrior", "final fantasy dark knight", "persona shadow creature",
             "bloodborne hunter beast", "demon souls corrupted knight", "sekiro shadow assassin",
             "elden ring tarnished lord", "dark souls 3 abyss dragon", "nier replicant gestalt",
@@ -418,42 +515,41 @@ async def chaos(ctx, *, prompt: str = None):
             "sekiro divine dragon", "elden ring elden beast", "dark souls 2 darklurker",
             "nier automata machine lifeform", "one piece ancient weapon", "dragon ball ultra instinct",
             "final fantasy 6 kefka", "persona 4 shadow self", "bloodborne amygdala",
-            "demon souls penetrator", "sekiro guardian ape", "elden ring malenia"
+            "demon souls penetrator", "sekiro guardian ape", "elden ring malenia",
+            "dark fantasy chaos demon", "anime waifu dark mage", "gacha limited edition warrior",
+            "soft hentai dark priestess", "hearthstone corrupted paladin", "nier automata 2b android",
+            "fromsoftware corrupted knight", "dark souls chaos lord", "bloodborne cosmic horror",
+            "demon souls old demon king", "sekiro immortal blade", "elden ring outer god"
         ]
         prompt = random.choice(random_themes)
-        logger.info(f"Chaos command - User: {ctx.author.name}, Random theme selected: {prompt}")
+        logger.info(f"Gacha card - User: {ctx.author.name}, Random theme selected: {prompt}")
     else:
-        logger.info(f"Chaos command - User: {ctx.author.name}, Prompt: {prompt}")
+        logger.info(f"Gacha card - User: {ctx.author.name}, Prompt: {prompt}")
     
-    # Loading message
-    loading_msg = await ctx.send("🔄 **Generating Chaos...** 🔮")
-    
-    # Step 1: Usa OpenAI (GPT-4) per generare dettagli strutturati
-    await loading_msg.edit(content="🔮 **Step 1:** Generando dettagli della carta con GPT-4...")
-    
+    # Step 1: Generate card data with GPT-4
     try:
         client = OpenAI(api_key=os.getenv('OPENAI_API_KEY'))
         
-        # Prompt per GPT-4 per generare dettagli strutturati
+        # Enhanced prompt for gacha-style cards
         gpt_prompt = f"""
-        Genera una carta da gioco stile Pokemon x Hearthstone basata su questo prompt: "{prompt}"
+        Genera una carta gacha stile Pokemon x Hearthstone basata su questo prompt: "{prompt}"
         
         Rispondi SOLO con un JSON valido nel seguente formato:
         {{
             "name": "Nome della carta",
-            "rarity": "Common/Rare/Epic/Legendary",
+            "rarity": "Common/Rare/Epic/Legendary/Limited",
             "attack": numero_attacco,
             "health": numero_vita,
             "ability_desc": "Descrizione breve dell'abilità (max 100 caratteri)"
         }}
         
-        Regole:
-        - Nome: creativo e tematico, focus su dark fantasy e caos
-        - Rarity: distribuzione naturale (Common 40%, Rare 30%, Epic 20%, Legendary 10%)
-        - Attack: 1-10 per Common, 2-12 per Rare, 3-15 per Epic, 5-20 per Legendary
-        - Health: 1-8 per Common, 2-10 per Rare, 3-12 per Epic, 5-15 per Legendary
-        - Ability: breve e potente, stile Hearthstone, tema dark fantasy
-        - Focus su creature caotiche, demoni, ombre, void, corruzione
+        Regole per gacha:
+        - Nome: creativo e tematico, focus su dark fantasy, anime, gacha
+        - Rarity: usa la distribuzione fornita (Common 50%, Rare 30%, Epic 15%, Legendary 4%, Limited 1%)
+        - Attack: 1-8 per Common, 2-12 per Rare, 3-15 per Epic, 5-20 per Legendary, 8-25 per Limited
+        - Health: 1-6 per Common, 2-10 per Rare, 3-12 per Epic, 5-15 per Legendary, 8-20 per Limited
+        - Ability: breve e potente, stile Hearthstone, tema dark fantasy/anime/gacha
+        - Focus su creature caotiche, demoni, ombre, void, corruzione, anime waifus, gacha characters
         """
         
         response = client.chat.completions.create(
@@ -472,39 +568,31 @@ async def chaos(ctx, *, prompt: str = None):
         health = card_data["health"]
         ability_desc = card_data["ability_desc"]
         
-        logger.info(f"Card data generated: {name} ({rarity}) - {attack}/{health}")
+        logger.info(f"Gacha card data generated: {name} ({rarity}) - {attack}/{health}")
         
     except Exception as e:
         logger.error(f"GPT-4 error: {e}")
-        await loading_msg.edit(content=f"❌ **Errore GPT-4:** {str(e)}")
-        return
+        return None, f"❌ **Errore GPT-4:** {str(e)}"
     
-    # Step 2: Crea prompt Leonardo dettagliato
-    await loading_msg.edit(content="🎨 **Step 2:** Generando immagine con Leonardo AI...")
+    # Step 2: Generate lore
+    lore = generate_card_lore(name, rarity, ability_desc)
     
-    # Colori per rarity
-    rarity_colors = {
-        'Common': 'silver',
-        'Rare': 'blue', 
-        'Epic': 'purple',
-        'Legendary': 'gold'
-    }
+    # Step 3: Generate image with Leonardo AI
+    rarity_style = get_rarity_style(rarity)
     
-    color = rarity_colors.get(rarity, 'silver')
-    
-    # Prompt Leonardo dettagliato - RIMOSSO "tattoo", focus su dark fantasy chaotic
-    leonardo_prompt = f"""A detailed Hearthstone/Pokemon-style trading card: Creature named {name}, rarity {rarity} with matching border ({color}), stats Attack {attack} / Health {health} at bottom, ability text '{ability_desc}', in dark fantasy chaotic art style, intricate lines, red/black/purple colors, highly readable bold gothic font for all text, high contrast, no blur, vertical card format 512x720, Pokemon x Hearthstone crossover style, dark fantasy theme"""
+    # Enhanced Leonardo prompt for gacha cards
+    leonardo_prompt = f"""A detailed gacha-style trading card: {name} ({rarity} rarity), {rarity_style['frame_style']} frame with {rarity_style['glow_effect']}, stats Attack {attack} / Health {health} at bottom, ability text '{ability_desc}', in dark fantasy chaotic art style mixed with anime/gacha aesthetics, intricate lines, {rarity_style['color']}/black/purple colors, highly readable bold gothic font for all text, high contrast, no blur, vertical card format 512x720, Pokemon x Hearthstone x Gacha crossover style, dark fantasy theme, "Chaos Deck Buddy" watermark, gacha-friendly colors"""
     
     # Generate Image con Leonardo SDK
     image_url = 'https://placeholder.com/512x720'
     try:
         leo_payload = {
             "prompt": leonardo_prompt,
-            "modelId": "b63f7119-31dc-4540-969b-2a9df997e173",  # DreamShaper v7 o simile
+            "modelId": "b63f7119-31dc-4540-969b-2a9df997e173",  # DreamShaper v7
             "width": 512,
             "height": 720,
             "num_images": 1,
-            "negative_prompt": "blurry, low quality, multiple images, collage, text errors, distorted, tattoo, tribal"
+            "negative_prompt": "blurry, low quality, multiple images, collage, text errors, distorted, tattoo, tribal, horizontal format"
         }
         
         headers = {"Authorization": f"Bearer {LEONARDO_API_KEY}"}
@@ -540,42 +628,223 @@ async def chaos(ctx, *, prompt: str = None):
         logger.error(f"Leonardo error: {str(e)}")
         image_url = 'https://i.imgur.com/example_card.png'  # Fallback
     
-    # Output: Embed Discord con immagine + testo formattato
-    await loading_msg.edit(content="📋 **Step 3:** Creando embed finale...")
-    
-    # Colori per embed
-    embed_colors = {
-        'Common': 0xC0C0C0,    # Silver
-        'Rare': 0x0000FF,       # Blue  
-        'Epic': 0x800080,       # Purple
-        'Legendary': 0xFFD700    # Gold
-    }
-    
-    embed_color = embed_colors.get(rarity, 0x00FF00)
-    
-    # Embed formattato
+    # Step 4: Create Discord embed
     embed = discord.Embed(
-        title=f"🃏 Chaos Card Generated: {name}",
-        description=f"**Rarity:** {rarity}\n**Stats:** {attack}/{health}\n**Ability:** {ability_desc}",
-        color=embed_color
+        title=f"{rarity_style['emoji']} Gacha Card: {name}",
+        description=f"**Rarity:** {rarity}\n**Stats:** {attack}/{health}\n**Ability:** {ability_desc}\n\n**Lore:** {lore}",
+        color=rarity_style['embed_color']
     )
     
     embed.set_image(url=image_url)
     embed.set_footer(text=f"🎮 Generated by {ctx.author.name} | Prompt: {prompt}")
     
-    await ctx.send(embed=embed)
-    
-    # Salva nel database
+    # Step 5: Save to database
     try:
         card_id = str(random.randint(100000, 999999))
         c.execute("INSERT INTO cards VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)", 
-                  (card_id, str(ctx.author.id), rarity, name, ability_desc, image_url, attack, health, "chaos_generated"))
+                  (card_id, str(ctx.author.id), rarity, name, lore, image_url, attack, health, "gacha_generated"))
+        
+        # Save lore separately
+        c.execute("INSERT OR REPLACE INTO card_lore VALUES (?, ?, ?)", (card_id, lore, 0))
+        
+        # Track pull history
+        c.execute("INSERT INTO pull_history VALUES (NULL, ?, ?, ?, ?)", 
+                  (str(ctx.author.id), "single" if not is_multi_pull else "multi", name, datetime.now().strftime('%Y-%m-%d %H:%M:%S')))
+        
         conn.commit()
-        logger.info(f"Card saved to database: {card_id}")
+        logger.info(f"Gacha card saved to database: {card_id}")
+        
+        # Check for legendary/limited announcements
+        if rarity in ['Legendary', 'Limited']:
+            c.execute("INSERT INTO server_announcements VALUES (NULL, ?, ?, ?, ?)", 
+                      (str(ctx.author.id), name, rarity, datetime.now().strftime('%Y-%m-%d %H:%M:%S')))
+            conn.commit()
+            
+            # Send server announcement
+            announcement_embed = discord.Embed(
+                title=f"🎉 {rarity} Card Pulled!",
+                description=f"**{ctx.author.name}** just pulled **{name}** ({rarity})!",
+                color=rarity_style['embed_color']
+            )
+            announcement_embed.set_image(url=image_url)
+            await ctx.send(embed=announcement_embed)
+        
+        return embed, None
+        
     except Exception as e:
         logger.error(f"Database error: {e}")
+        return embed, f"⚠️ Card generated but database error: {str(e)}"
+
+@bot.command(name='chaos')
+@commands.cooldown(1, 30, commands.BucketType.user)  # 30 second cooldown
+async def chaos(ctx, amount: int = 1, *, prompt: str = None):
+    """
+    Genera carte gacha AI stile Pokemon x Hearthstone.
+    Uso: !chaos <numero> <prompt> (es. "!chaos 1 fiery chaos dragon" o "!chaos 10")
+    Se usato senza parametri, genera una carta basata su temi casuali.
+    """
     
-    await loading_msg.edit(content="✅ **Carta generata con successo!** 🎉")
+    if amount < 1 or amount > 20:
+        await ctx.send("❌ **Errore:** Numero di carte deve essere tra 1 e 20!")
+        return
+    
+    if amount == 1:
+        # Single pull
+        loading_msg = await ctx.send("🔄 **Generating Gacha Card...** 🔮")
+        
+        # Generate single card
+        embed, error = await generate_gacha_card(ctx, prompt, is_multi_pull=False)
+        
+        if error:
+            await loading_msg.edit(content=error)
+            return
+        
+        await ctx.send(embed=embed)
+        await loading_msg.edit(content="✅ **Carta gacha generata con successo!** 🎉")
+    else:
+        # Multi-pull with enhanced cooldown
+        loading_msg = await ctx.send(f"🔄 **Generating {amount} Gacha Cards...** 🔮")
+        
+        cards_generated = []
+        for i in range(amount):
+            await loading_msg.edit(content=f"🎨 **Generating card {i+1}/{amount}...**")
+            
+            embed, error = await generate_gacha_card(ctx, prompt, is_multi_pull=True)
+            
+            if error:
+                await loading_msg.edit(content=f"❌ **Errore carta {i+1}:** {error}")
+                continue
+            
+            cards_generated.append(embed)
+            
+            # Send each card
+            await ctx.send(embed=embed)
+            
+            # Small delay between cards
+            await asyncio.sleep(1)
+        
+        # Summary message
+        rarity_counts = {}
+        for embed in cards_generated:
+            # Extract rarity from embed description
+            desc = embed.description
+            if "**Rarity:**" in desc:
+                rarity = desc.split("**Rarity:**")[1].split("\n")[0].strip()
+                rarity_counts[rarity] = rarity_counts.get(rarity, 0) + 1
+        
+        summary = f"✅ **Multi-pull completato!** Generati {len(cards_generated)}/{amount} carte:\n"
+        for rarity, count in rarity_counts.items():
+            summary += f"{get_rarity_style(rarity)['emoji']} {rarity}: {count}\n"
+        
+        await loading_msg.edit(content=summary)
+
+@bot.command(name='story')
+async def story(ctx, card_id: str):
+    """
+    Genera lore extra per una carta specifica.
+    Uso: !story <card_id>
+    """
+    
+    # Check if card exists and is owned by user
+    c.execute("SELECT name, rarity, description FROM cards WHERE id=? AND user_id=?", (card_id, str(ctx.author.id)))
+    card = c.fetchone()
+    
+    if not card:
+        await ctx.send("❌ **Carta non trovata!** Assicurati di possedere la carta e di usare l'ID corretto.")
+        return
+    
+    name, rarity, description = card
+    
+    loading_msg = await ctx.send("📖 **Generando lore extra...**")
+    
+    try:
+        client = OpenAI(api_key=os.getenv('OPENAI_API_KEY'))
+        
+        # Generate extended lore
+        lore_prompt = f"""
+        Generate an extended, detailed lore story for the {rarity} card "{name}" with description "{description}".
+        
+        Create a compelling narrative that includes:
+        - Detailed origin story (3-4 sentences)
+        - Character development and personality
+        - Powers and abilities explanation
+        - Connection to the chaotic realm
+        - Memorable quotes or catchphrases
+        - Future potential or evolution
+        
+        Style: Anime/gacha/dark fantasy, chaotic, ironic, and dramatic. Make it engaging and fitting for a {rarity} rarity card.
+        Respond in English only.
+        """
+        
+        response = client.chat.completions.create(
+            model="gpt-4",
+            messages=[{"role": "user", "content": lore_prompt}],
+            max_tokens=400,
+            temperature=0.9
+        )
+        
+        extended_lore = response.choices[0].message.content.strip()
+        
+        # Update lore in database
+        c.execute("UPDATE card_lore SET lore=?, story_requests=story_requests+1 WHERE card_id=?", (extended_lore, card_id))
+        conn.commit()
+        
+        # Create embed
+        rarity_style = get_rarity_style(rarity)
+        embed = discord.Embed(
+            title=f"📖 Extended Lore: {name}",
+            description=extended_lore,
+            color=rarity_style['embed_color']
+        )
+        embed.set_footer(text=f"🎮 Story requested by {ctx.author.name}")
+        
+        await ctx.send(embed=embed)
+        await loading_msg.edit(content="✅ **Lore extra generato con successo!** 📖")
+        
+    except Exception as e:
+        logger.error(f"Story generation error: {e}")
+        await loading_msg.edit(content=f"❌ **Errore generazione lore:** {str(e)}")
+
+@bot.command(name='leaderboard')
+async def leaderboard(ctx):
+    """Enhanced leaderboard with gacha statistics"""
+    
+    # Get top users by points
+    c.execute("SELECT user_id, points, level FROM users ORDER BY points DESC LIMIT 10")
+    top_users = c.fetchall()
+    
+    # Get gacha statistics
+    c.execute("""
+        SELECT user_id, COUNT(*) as total_cards,
+               SUM(CASE WHEN rarity = 'Legendary' THEN 1 ELSE 0 END) as legendary_count,
+               SUM(CASE WHEN rarity = 'Limited' THEN 1 ELSE 0 END) as limited_count
+        FROM cards 
+        GROUP BY user_id 
+        ORDER BY total_cards DESC 
+        LIMIT 10
+    """)
+    top_collectors = c.fetchall()
+    
+    # Create leaderboard embed
+    embed = discord.Embed(title="🏆 Chaos Deck Leaderboard", color=0xFFD700)
+    
+    # Points leaderboard
+    points_text = ""
+    for i, user in enumerate(top_users, 1):
+        user_name = bot.get_user(int(user[0])).name if bot.get_user(int(user[0])) else user[0]
+        points_text += f"{i}. **{user_name}**: {user[1]} pts (Lvl {user[2]})\n"
+    
+    embed.add_field(name="💰 Points Leaderboard", value=points_text, inline=False)
+    
+    # Collection leaderboard
+    collection_text = ""
+    for i, collector in enumerate(top_collectors, 1):
+        user_name = bot.get_user(int(collector[0])).name if bot.get_user(int(collector[0])) else collector[0]
+        collection_text += f"{i}. **{user_name}**: {collector[1]} cards (✨{collector[2]} 🌟{collector[3]})\n"
+    
+    embed.add_field(name="🎴 Collection Leaderboard", value=collection_text, inline=False)
+    
+    await ctx.send(embed=embed)
 
 @bot.command(name='daily')
 async def daily(ctx):
@@ -873,20 +1142,6 @@ async def inventory(ctx):
             except asyncio.TimeoutError:
                 await msg.clear_reactions()
                 break
-
-@bot.command(name='leaderboard')
-async def leaderboard(ctx):
-    c.execute("SELECT * FROM users ORDER BY points DESC LIMIT 5")
-    top = c.fetchall()
-    
-    leaderboard_msg = "🏆 **Leaderboard:**\n"
-    for i, user in enumerate(top, 1):
-        user_name = bot.get_user(int(user[0])).name if bot.get_user(int(user[0])) else user[0]
-        user_badges = get_user_badges(user[0])
-        badges_str = " " + " ".join(user_badges) if user_badges else ""
-        leaderboard_msg += f"{i}. **{user_name}**: {user[1]} pts (Lvl {user[2]}){badges_str}\n"
-    
-    await ctx.send(leaderboard_msg)
 
 @bot.command(name='shop')
 async def shop(ctx, *args):
