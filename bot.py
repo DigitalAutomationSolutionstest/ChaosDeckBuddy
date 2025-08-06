@@ -402,24 +402,28 @@ async def chaos(ctx, *, prompt: str = None):
     """
     Genera carte AI stile Pokemon x Hearthstone con prompt personalizzato.
     Uso: !chaos <prompt> (es. "!chaos fiery chaos dragon")
+    Se usato senza prompt, genera una carta basata su temi casuali.
     """
     
+    # Se non c'è prompt, genera un tema casuale
     if not prompt:
-        embed = discord.Embed(
-            title="❌ **Errore: Prompt Mancante**",
-            description="Devi fornire un prompt per generare una carta!",
-            color=0xFF0000
-        )
-        embed.add_field(
-            name="📝 **Esempio:**",
-            value="`!chaos fiery chaos dragon`\n`!chaos shadow demon lord`\n`!chaos void corrupted beast`",
-            inline=False
-        )
-        embed.set_footer(text="🎮 Dark Fantasy Chaos Cards")
-        await ctx.send(embed=embed)
-        return
-    
-    logger.info(f"Chaos command - User: {ctx.author.name}, Prompt: {prompt}")
+        # Temi ispirati a jrpg, dark souls, nier automata, one piece, dragon ball, etc.
+        random_themes = [
+            "dark souls abyss watcher", "nier automata android", "one piece devil fruit user", 
+            "dragon ball saiyan warrior", "final fantasy dark knight", "persona shadow creature",
+            "bloodborne hunter beast", "demon souls corrupted knight", "sekiro shadow assassin",
+            "elden ring tarnished lord", "dark souls 3 abyss dragon", "nier replicant gestalt",
+            "one piece yonko commander", "dragon ball super saiyan god", "final fantasy 7 sephiroth",
+            "persona 5 phantom thief", "bloodborne great one", "demon souls old one",
+            "sekiro divine dragon", "elden ring elden beast", "dark souls 2 darklurker",
+            "nier automata machine lifeform", "one piece ancient weapon", "dragon ball ultra instinct",
+            "final fantasy 6 kefka", "persona 4 shadow self", "bloodborne amygdala",
+            "demon souls penetrator", "sekiro guardian ape", "elden ring malenia"
+        ]
+        prompt = random.choice(random_themes)
+        logger.info(f"Chaos command - User: {ctx.author.name}, Random theme selected: {prompt}")
+    else:
+        logger.info(f"Chaos command - User: {ctx.author.name}, Prompt: {prompt}")
     
     # Loading message
     loading_msg = await ctx.send("🔄 **Generating Chaos...** 🔮")
