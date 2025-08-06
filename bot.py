@@ -401,17 +401,31 @@ def get_user_achievements(user_id):
 async def chaos(ctx, *, prompt: str = None):
     """
     Genera carte AI stile Pokemon x Hearthstone con prompt personalizzato.
-    Uso: !chaos <prompt> (es. "!chaos demonic tattoo dragon")
+    Uso: !chaos <prompt> (es. "!chaos fiery chaos dragon")
     """
     
     if not prompt:
-        await ctx.send("❌ **Errore:** Devi fornire un prompt! Esempio: `!chaos demonic tattoo dragon`")
+        embed = discord.Embed(
+            title="❌ **Errore: Prompt Mancante**",
+            description="Devi fornire un prompt per generare una carta!",
+            color=0xFF0000
+        )
+        embed.add_field(
+            name="📝 **Esempio:**",
+            value="`!chaos fiery chaos dragon`\n`!chaos shadow demon lord`\n`!chaos void corrupted beast`",
+            inline=False
+        )
+        embed.set_footer(text="🎮 Dark Fantasy Chaos Cards")
+        await ctx.send(embed=embed)
         return
     
     logger.info(f"Chaos command - User: {ctx.author.name}, Prompt: {prompt}")
     
+    # Loading message
+    loading_msg = await ctx.send("🔄 **Generating Chaos...** 🔮")
+    
     # Step 1: Usa OpenAI (GPT-4) per generare dettagli strutturati
-    await ctx.send("🔮 **Step 1:** Generando dettagli della carta con GPT-4...")
+    await loading_msg.edit(content="🔮 **Step 1:** Generando dettagli della carta con GPT-4...")
     
     try:
         client = OpenAI(api_key=os.getenv('OPENAI_API_KEY'))
@@ -430,11 +444,12 @@ async def chaos(ctx, *, prompt: str = None):
         }}
         
         Regole:
-        - Nome: creativo e tematico
+        - Nome: creativo e tematico, focus su dark fantasy e caos
         - Rarity: distribuzione naturale (Common 40%, Rare 30%, Epic 20%, Legendary 10%)
         - Attack: 1-10 per Common, 2-12 per Rare, 3-15 per Epic, 5-20 per Legendary
         - Health: 1-8 per Common, 2-10 per Rare, 3-12 per Epic, 5-15 per Legendary
-        - Ability: breve e potente, stile Hearthstone
+        - Ability: breve e potente, stile Hearthstone, tema dark fantasy
+        - Focus su creature caotiche, demoni, ombre, void, corruzione
         """
         
         response = client.chat.completions.create(
@@ -457,11 +472,11 @@ async def chaos(ctx, *, prompt: str = None):
         
     except Exception as e:
         logger.error(f"GPT-4 error: {e}")
-        await ctx.send(f"❌ **Errore GPT-4:** {str(e)}")
+        await loading_msg.edit(content=f"❌ **Errore GPT-4:** {str(e)}")
         return
     
     # Step 2: Crea prompt Leonardo dettagliato
-    await ctx.send("🎨 **Step 2:** Generando immagine con Leonardo AI...")
+    await loading_msg.edit(content="🎨 **Step 2:** Generando immagine con Leonardo AI...")
     
     # Colori per rarity
     rarity_colors = {
@@ -473,8 +488,8 @@ async def chaos(ctx, *, prompt: str = None):
     
     color = rarity_colors.get(rarity, 'silver')
     
-    # Prompt Leonardo dettagliato
-    leonardo_prompt = f"""A Hearthstone-style card illustration: {name} creature, {rarity} border color ({color}), stats {attack}/{health} at bottom, ability text '{ability_desc}', in dark fantasy tattoo art style, highly detailed, readable text overlay in bold gothic font, no blurry elements, high resolution 512x720, Pokemon x Hearthstone crossover style"""
+    # Prompt Leonardo dettagliato - RIMOSSO "tattoo", focus su dark fantasy chaotic
+    leonardo_prompt = f"""A detailed Hearthstone/Pokemon-style trading card: Creature named {name}, rarity {rarity} with matching border ({color}), stats Attack {attack} / Health {health} at bottom, ability text '{ability_desc}', in dark fantasy chaotic art style, intricate lines, red/black/purple colors, highly readable bold gothic font for all text, high contrast, no blur, vertical card format 512x720, Pokemon x Hearthstone crossover style, dark fantasy theme"""
     
     # Generate Image con Leonardo SDK
     image_url = 'https://placeholder.com/512x720'
@@ -485,7 +500,7 @@ async def chaos(ctx, *, prompt: str = None):
             "width": 512,
             "height": 720,
             "num_images": 1,
-            "negative_prompt": "blurry, low quality, multiple images, collage, text errors, distorted"
+            "negative_prompt": "blurry, low quality, multiple images, collage, text errors, distorted, tattoo, tribal"
         }
         
         headers = {"Authorization": f"Bearer {LEONARDO_API_KEY}"}
@@ -522,7 +537,7 @@ async def chaos(ctx, *, prompt: str = None):
         image_url = 'https://i.imgur.com/example_card.png'  # Fallback
     
     # Output: Embed Discord con immagine + testo formattato
-    await ctx.send("📋 **Step 3:** Creando embed finale...")
+    await loading_msg.edit(content="📋 **Step 3:** Creando embed finale...")
     
     # Colori per embed
     embed_colors = {
@@ -536,7 +551,7 @@ async def chaos(ctx, *, prompt: str = None):
     
     # Embed formattato
     embed = discord.Embed(
-        title=f"🎴 {name}",
+        title=f"🃏 Chaos Card Generated: {name}",
         description=f"**Rarity:** {rarity}\n**Stats:** {attack}/{health}\n**Ability:** {ability_desc}",
         color=embed_color
     )
@@ -556,7 +571,7 @@ async def chaos(ctx, *, prompt: str = None):
     except Exception as e:
         logger.error(f"Database error: {e}")
     
-    await ctx.send("✅ **Carta generata con successo!** 🎉")
+    await loading_msg.edit(content="✅ **Carta generata con successo!** 🎉")
 
 @bot.command(name='daily')
 async def daily(ctx):
